@@ -737,8 +737,22 @@ impl Reader<'_> {
                 self.doc.settings.minor_font = f;
             }
             let cs = |n: &str| fs.child(n).and_then(|f| f.child("a:cs")).and_then(|c| c.attr("typeface")).unwrap_or_default().to_string();
+            let thai = |n: &str| {
+                fs.child(n)
+                    .and_then(|f| f.children("a:font").find(|x| x.attr("script").is_some_and(|s| s.eq_ignore_ascii_case("Thai"))))
+                    .and_then(|x| x.attr("typeface"))
+                    .unwrap_or_default()
+                    .to_string()
+            };
             self.pc.major_cs = cs("a:majorFont");
             self.pc.minor_cs = cs("a:minorFont");
+            self.pc.major_thai = thai("a:majorFont");
+            self.pc.minor_thai = thai("a:minorFont");
+            // Kept on the document so a save writes the per-script theme faces back (#18).
+            self.doc.settings.major_cs_font = self.pc.major_cs.clone();
+            self.doc.settings.minor_cs_font = self.pc.minor_cs.clone();
+            self.doc.settings.major_thai_font = self.pc.major_thai.clone();
+            self.doc.settings.minor_thai_font = self.pc.minor_thai.clone();
         }
         self.pc.major_font = self.doc.settings.major_font.clone();
         self.pc.minor_font = self.doc.settings.minor_font.clone();

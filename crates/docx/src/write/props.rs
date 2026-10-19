@@ -37,6 +37,11 @@ pub fn rpr_inner(w: &mut W, c: &CharProps) {
     if let Some(cs) = &c.font_cs {
         fonts.push(("w:cs", cs));
     }
+    // A complex-script font that came from a theme keeps its theme reference, so Word resolves
+    // the same face and the theme survives the round trip (#18).
+    if let Some(theme) = &c.font_cs_theme {
+        fonts.push(("w:cstheme", theme));
+    }
     if !fonts.is_empty() {
         w.empty("w:rFonts", &fonts);
     }

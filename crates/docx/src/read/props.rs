@@ -47,6 +47,10 @@ pub struct PropCtx {
     /// The theme's complex-script fonts (`a:cs`), which the `…Bidi` theme slots name.
     pub major_cs: String,
     pub minor_cs: String,
+    /// The theme's Thai script typefaces (`<a:font script="Thai">`), which take precedence for
+    /// Thai text in a `…Bidi` slot (#18).
+    pub major_thai: String,
+    pub minor_thai: String,
     /// The theme's colour scheme (dk1, lt1, dk2, lt2, accent1..6, hlink, folHlink); empty when the
     /// package has none, and then `w:themeColor` falls back to the fixed colour.
     pub theme_colors: Vec<Rgb>,
@@ -91,6 +95,25 @@ impl PropCtx {
         // names nothing, so the font beside it or the inherited one applies.
         let f = if t.ends_with("Bidi") { cs } else { latin };
         (!f.is_empty()).then(|| f.clone())
+    }
+
+    /// The theme faces a `w:cstheme` slot names: (complex-script `a:cs`, Thai script typeface).
+    fn theme_cs_slot(&self, t: &str) -> (&str, &str) {
+        if t.starts_with("major") { (&self.major_cs, &self.major_thai) } else { (&self.minor_cs, &self.minor_thai) }
+    }
+
+    /// The generic complex-script family a `w:cstheme` slot names (the theme's `a:cs`), which
+    /// Arabic, Hebrew, Indic and other complex-script text uses.
+    fn theme_cs_font(&self, t: &str) -> Option<String> {
+        let f = self.theme_cs_slot(t).0;
+        (!f.is_empty()).then(|| f.to_string())
+    }
+
+    /// The Thai family a `w:cstheme` slot names (`<a:font script="Thai">`), which Thai text
+    /// requests (#18); `None` when the theme names none.
+    fn theme_thai_font(&self, t: &str) -> Option<String> {
+        let f = self.theme_cs_slot(t).1;
+        (!f.is_empty()).then(|| f.to_string())
     }
 
     /// The theme colour `e` names in `attr` (`w:themeColor`, `w:themeFill`), through the colour
@@ -169,11 +192,16 @@ impl PropCtx {
                                 .map(str::to_string)
                             },
                         );
-                    // The complex-script font (Persian, Arabic, Hebrew text). A `w:cstheme` font is
-                    // left to inherit: the theme's per-script fonts aren't read.
-                    c.font_cs = k.attr("w:cs").filter(|f| !f.is_empty() && f.len() < 256).map(str::to_string);
+                    // The complex-script font (Persian, Arabic, Hebrew, Thai text). A `w:cstheme`
+                    // slot resolves through the drawing theme's complex-script font; its Thai
+                    // script typeface is kept aside for the Thai portion. The slot is kept so the
+                    // save writes it back (#18).
+                    let cs_theme = k.attr("w:cstheme").filter(|f| !f.is_empty() && f.len() < 256);
+                    c.font_cs_theme = cs_theme.map(str::to_string);
+                    c.font_cs_thai = cs_theme.and_then(|t| self.theme_thai_font(t)).filter(|f| f.len() < 256);
+                    c.font_cs = cs_theme.and_then(|t| self.theme_cs_font(t)).or_else(|| named("w:cs")).filter(|f| f.len() < 256);
                     // The East Asian font (Chinese, Japanese, Korean text). A `w:eastAsiaTheme` font
-                    // is left to inherit, like `w:cstheme`.
+                    // is left to inherit.
                     c.font_ea = k.attr("w:eastAsia").filter(|f| !f.is_empty() && f.len() < 256).map(str::to_string);
                 }
                 "w:b" => c.bold = Some(on_off(k)),

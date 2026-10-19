@@ -55,10 +55,15 @@ pub struct ResolvedChar {
     pub lang: Option<String>,
     /// Right-to-left run (`w:rtl`).
     pub rtl: bool,
-    /// The whole run uses the complex-script properties (`w:cs`).
+    /// The run carries complex-script formatting (`w:cs`). It applies per script: see
+    /// [`Self::uses_complex`].
     pub cs: bool,
     /// Complex-script font, size, bold and italic (Arabic, Persian, Hebrew… text).
     pub font_cs: String,
+    /// The theme's Thai script typeface, when one is named; Thai text requests it while other
+    /// complex scripts keep [`Self::font_cs`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_cs_thai: Option<String>,
     /// East Asian font (Chinese, Japanese and Korean text), when one is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_ea: Option<String>,
@@ -104,6 +109,7 @@ impl ResolvedChar {
             rtl: c.rtl.unwrap_or(false),
             cs: c.cs.unwrap_or(false),
             font_cs: c.font_cs.clone().or_else(|| c.font.clone()).unwrap_or_else(|| crate::styles::BODY_FONT.to_string()),
+            font_cs_thai: c.font_cs_thai.clone(),
             font_ea: c.font_ea.clone(),
             size_cs: c.size_cs.or(c.size).unwrap_or(11.0).clamp(1.0, 1638.0),
             bold_cs: c.bold_cs.or(c.bold).unwrap_or(false),
@@ -111,8 +117,8 @@ impl ResolvedChar {
         }
     }
     /// The formatting complex-script text in this run is drawn with: the complex-script font,
-    /// size, bold and italic in place of the others (Word formats Arabic, Persian and Hebrew
-    /// characters, and every character of an `rtl`/`cs` run, this way).
+    /// size, bold and italic in place of the others (Word formats Arabic, Persian, Hebrew and
+    /// Thai characters, and every character of an `rtl` run, this way).
     pub fn complex(&self) -> ResolvedChar {
         ResolvedChar { font: self.font_cs.clone(), size: self.size_cs, bold: self.bold_cs, italic: self.italic_cs, ..self.clone() }
     }
@@ -122,8 +128,14 @@ impl ResolvedChar {
         self.kern > 0.0 && self.size >= self.kern
     }
     /// Does a character of this run use the complex-script properties?
+    ///
+    /// `w:cs` marks a run that carries complex-script formatting, but each character is still
+    /// drawn per script: its Latin letters and digits keep the Latin font, size and weight, while
+    /// complex-script characters (right-to-left scripts, Indic, Thai, Lao…) use the `w:cs` family
+    /// and `w:szCs` size. A right-to-left run (`w:rtl`) makes every character complex, as Word
+    /// does.
     pub fn uses_complex(&self, c: char) -> bool {
-        self.rtl || self.cs || crate::bidi::is_complex_script(c)
+        self.rtl || crate::bidi::is_complex_script(c)
     }
     /// The size glyphs are drawn at (super/subscript shrink to ~2/3).
     pub fn draw_size(&self) -> f32 {

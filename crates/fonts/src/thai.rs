@@ -199,6 +199,50 @@ pub fn first_installed(role: Role, platform: Platform, inventory: &impl Inventor
     candidates(role, platform).iter().copied().find(|f| inventory.has_family(f))
 }
 
+/// The family one run's Thai characters are drawn in (#18).
+///
+/// Every run containing Thai resolves once, per script: an installed family that draws the run's
+/// Thai characters wins exactly; otherwise the Thai portion is drawn in one face from the ordered
+/// policy (Latin text keeps the run's ordinary Latin substitute). `thai` holds the run's Thai
+/// characters, so the chosen face covers the whole portion rather than one character.
+pub fn resolve_run(requested: &str, platform: Platform, inventory: &impl Inventory, thai: &[char]) -> Option<String> {
+    let mut set: Vec<char> = thai.to_vec();
+    set.sort_unstable();
+    set.dedup();
+    let set: Vec<char> = set.into_iter().filter(|c| is_thai(*c)).collect();
+    if set.is_empty() {
+        return None;
+    }
+    // An installed family that draws Thai characters is the exact face Word uses: the policy
+    // never substitutes over a family that has the script (a partial face still falls back per
+    // character for the few glyphs it lacks).
+    if inventory.has_family(requested) && set.iter().any(|c| inventory.covers(requested, *c)) {
+        return Some(requested.trim().to_string());
+    }
+    // A missing (or Thai-less) family: one face for the Thai portion. A Thai serif request keeps
+    // its serif list; every other family (a Thai sans, a Thai-capable Latin family such as Tahoma
+    // with its own Latin substitute, or an ordinary Latin family) uses the general Thai list.
+    let role = match role(requested) {
+        Some(Role::Serif) => Role::Serif,
+        _ => Role::Sans,
+    };
+    substitute_for(role, platform, inventory, &[&set]).map(str::to_string)
+}
+
+/// Is `c` a Thai character (letters, marks, digits and the baht sign)? Thai is a complex script:
+/// its marks and SARA AM must never start a new face.
+pub fn is_thai(c: char) -> bool {
+    matches!(u32::from(c), 0x0E00..=0x0E7F)
+}
+
+/// A character that joins the face before it rather than starting a new one in a Thai run: a
+/// combining mark, a joiner, or SARA AM (U+0E33), which UAX #29 decomposes into a mark and a
+/// vowel but Word draws with its consonant's face.
+pub fn joins_previous_face(c: char) -> bool {
+    use unicode_bidi::BidiClass::{BN, NSM};
+    c == '\u{0E33}' || (matches!(unicode_bidi::bidi_class(c), NSM | BN) && !c.is_control())
+}
+
 /// The installed family for `role` that best draws a whole run, in Word's platform order.
 ///
 /// `cover_sets` are tried in order (for a mixed Thai/Latin run, first Thai letters *and* Latin
@@ -408,5 +452,75 @@ mod tests {
             assert!(!is_document_family(name), "{name}");
             assert!(!is_capable_latin_family(name), "{name}");
         }
+    }
+
+    /// An inventory that knows families and which characters their Regular face covers.
+    struct Faces(Vec<(&'static str, &'static str)>);
+    impl Inventory for Faces {
+        fn has_family(&self, family: &str) -> bool {
+            self.0.iter().any(|(f, _)| f.eq_ignore_ascii_case(family))
+        }
+        fn covers(&self, family: &str, c: char) -> bool {
+            self.0.iter().any(|(f, chars)| f.eq_ignore_ascii_case(family) && chars.contains(c))
+        }
+    }
+
+    const THAI: &[char] = &['\u{0E19}', '\u{0E49}', '\u{0E33}', '\u{0E3F}', '\u{0E50}'];
+    const THAI_LATIN: &str = "\u{0E19}\u{0E49}\u{0E33}\u{0E3F}\u{0E50}ABC123";
+
+    #[test]
+    fn an_installed_family_that_draws_thai_wins_exactly() {
+        // Exact installed family (a Thai family, a system face or a theme's Thai typeface) wins,
+        // whatever the policy lists say.
+        let installed = inventory(&["TH Niramit AS", "TH Sarabun New"]);
+        assert_eq!(resolve_run("TH Niramit AS", Platform::Linux, &installed, THAI).as_deref(), Some("TH Niramit AS"));
+        // A Thai-capable Latin family that covers Thai draws it too.
+        let capable = Faces(vec![("Tahoma", THAI_LATIN)]);
+        assert_eq!(resolve_run("Tahoma", Platform::Windows, &capable, THAI).as_deref(), Some("Tahoma"));
+    }
+
+    #[test]
+    fn a_missing_family_uses_one_thai_face_and_leaves_latin_alone() {
+        // A missing Thai document family resolves through its role's ordered list, independent of
+        // what is installed first (not metric closeness). One family for the whole Thai portion.
+        let installed = inventory(&["Noto Sans Thai", "TH SarabunPSK", "Noto Serif Thai"]);
+        assert_eq!(resolve_run("TH Sarabun New", Platform::Linux, &installed, THAI).as_deref(), Some("TH SarabunPSK"));
+        assert_eq!(resolve_run("Angsana New", Platform::Linux, &installed, THAI).as_deref(), Some("Noto Serif Thai"));
+        // A missing Thai-capable Latin family keeps the Latin substitute; its Thai characters use
+        // the general Thai list.
+        assert_eq!(resolve_run("Tahoma", Platform::Linux, &installed, THAI).as_deref(), Some("TH SarabunPSK"));
+        // An ordinary missing Latin family behaves the same way for its Thai text.
+        assert_eq!(resolve_run("Definitely Not A Font", Platform::Linux, &installed, THAI).as_deref(), Some("TH SarabunPSK"));
+    }
+
+    #[test]
+    fn an_installed_family_without_thai_gets_one_thai_face() {
+        // The family stays for Latin text (the layout keeps it); only the Thai portion moves to
+        // one face from the policy.
+        let installed = Faces(vec![("Source Sans 3", "ABC123"), ("Noto Sans Thai", THAI_LATIN)]);
+        assert_eq!(resolve_run("Source Sans 3", Platform::Linux, &installed, THAI).as_deref(), Some("Noto Sans Thai"));
+        // A serif family lacking Thai asks for a serif Thai face.
+        let serif = Faces(vec![("Source Serif 4", "ABC123"), ("Noto Sans Thai", THAI_LATIN), ("Noto Serif Thai", THAI_LATIN)]);
+        assert_eq!(resolve_run("Source Serif 4", Platform::Linux, &serif, THAI).as_deref(), Some("Noto Sans Thai"));
+        assert_eq!(resolve_run("Angsana New", Platform::Linux, &serif, THAI).as_deref(), Some("Noto Serif Thai"));
+    }
+
+    #[test]
+    fn thai_marks_and_sara_am_join_the_preceding_face() {
+        // SARA AM (U+0E33) is not a Unicode mark but must keep its consonant's face; so must the
+        // combining marks and joiners.
+        assert!(joins_previous_face('\u{0E33}'));
+        assert!(joins_previous_face('\u{0E49}') && joins_previous_face('\u{0E31}') && joins_previous_face('\u{0E34}'));
+        assert!(!joins_previous_face('\u{0E19}') && !joins_previous_face('A'));
+        // Every Thai character, ฿ and Thai digits included, is Thai for run resolution.
+        assert!(THAI.iter().all(|c| is_thai(*c)));
+        assert!(!is_thai('A') && !is_thai('1'));
+    }
+
+    #[test]
+    fn runs_without_thai_resolve_to_nothing() {
+        let installed = inventory(&["TH Sarabun New"]);
+        assert_eq!(resolve_run("TH Sarabun New", Platform::Linux, &installed, &[]), None);
+        assert_eq!(resolve_run("TH Sarabun New", Platform::Linux, &installed, &['A', '1']), None);
     }
 }
