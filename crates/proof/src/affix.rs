@@ -28,6 +28,10 @@ use crate::patterns::{FxHasher, FxMap};
 const MAGIC: &str = "WCAFF1";
 /// Longest word (in bytes) looked up; longer input is never a dictionary word.
 pub const MAX_WORD_BYTES: usize = 120;
+/// Most stems read from one `.dic`. The largest dictionaries in the wild have under half a
+/// million; the cap bounds memory when a huge (or hostile) file is at [`crate::hunspell`]'s size
+/// limit, and a truncated list still spells the words it did read.
+const MAX_STEMS: usize = 2_000_000;
 /// Empty slot in the stem hash table.
 const EMPTY: u32 = u32::MAX;
 
@@ -366,6 +370,9 @@ impl AffixDict {
         let rules = parse_aff(aff)?;
         let mut stems: Vec<(String, String)> = Vec::new();
         for (n, line) in dic.lines().enumerate() {
+            if stems.len() >= MAX_STEMS {
+                break;
+            }
             let Some(tok) = line.split_whitespace().next() else { continue };
             if n == 0 && tok.parse::<usize>().is_ok() {
                 continue;
