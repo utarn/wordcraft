@@ -11,6 +11,7 @@ pub mod color;
 mod fontdb;
 pub mod math;
 mod script;
+pub mod thai;
 mod ui_fallback;
 pub mod word;
 
