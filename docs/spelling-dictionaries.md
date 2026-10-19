@@ -1,13 +1,13 @@
 # Installing spelling dictionaries
 
-> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-23 · **Change:** minor (Spanish: `es_ES`, `es_MX`, `es_419` and `es_UY` with their fallbacks, #3360, #3553; previously trivial: every Hunspell language shows (no dictionary), not only Polish and Portuguese, and Indonesian is listed, #3150; previously trivial: ISO 8859-1 dictionaries are read, #2824)
+> **Last reviewed:** 2026-10-16 · **Last updated:** 2026-10-23 · **Change:** minor (Spanish: `es_ES`, `es_MX`, `es_419` and `es_UY` with their fallbacks, #3360, #3553; previously trivial: Thai: an installed `th_TH` pair (TIS-620 included) is used before the bundled CC0 list, #21; previously trivial: every Hunspell language shows (no dictionary), not only Polish and Portuguese, and Indonesian is listed, #3150; previously trivial: ISO 8859-1 dictionaries are read, #2824)
 
 English spelling works out of the box. Polish, Russian, Portuguese, Czech, Italian, Croatian,
 Turkish, Indonesian and Spanish spelling use a standard **Hunspell** dictionary (an `.aff` and a `.dic` file) that
 WordCraft reads at runtime. These dictionaries are not bundled: they are large, and several are
 GPL or LGPL licensed. Without one, the language isn't checked. The status bar then shows the
 language with **(no dictionary)**, for example *Português (Brasil) (no dictionary)*.
-
+Thai is the exception, as it falls back to a bundled word list.
 If a dictionary is installed but can't be read (an unsupported `SET` encoding, a file over the
 size limit, a parse error), the language isn't checked either, and the status bar shows
 **(dictionary unreadable)** instead. Its tooltip gives the `.dic` file and the reason, and
@@ -34,7 +34,10 @@ WordCraft looks for the first of these file names (each name means a `<name>.aff
 | Spanish (Mexico) | `es_MX`, `es-MX`, `es_419`, `es-419`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
 | Spanish (Latin America, and the other Spanish regions of the Americas) | `es_419`, `es-419`, `es_ANY`, `es`, `es_US`, `es_MX`, `es_AR`, `es-AR` | LibreOffice `dict-es` (RLA-ES) |
 | Spanish (Uruguay) | `es_UY`, `es-UY`, `es_AR`, `es-AR`, `es_419`, `es-419`, `es_ANY`, `es` | LibreOffice `dict-es` (RLA-ES) |
+| Thai | `th_TH`, `th-TH`, `th` | LibreOffice / Thai proofing tools (TIS-620) |
 
+Thai is also checked without an installed dictionary: when no `th_TH` pair is found, WordCraft
+uses its bundled CC0-1.0 PyThaiNLP word list. An installed pair still takes precedence.
 Every Portuguese region uses the same `pt_BR` dictionary, so text marked *Português (Portugal)*
 is checked with it too.
 
@@ -45,7 +48,7 @@ American one found. LibreOffice's `dict-es` has them all. Uruguayan Spanish also
 `vos` forms of the dictionary's verbs (`tenés`, `vení`, `decime`, `decímelo`).
 
 The files may be UTF-8 or the encoding named on the `.aff`'s `SET` line (ISO 8859-1, ISO 8859-2, KOI8-R
-and Windows-1251 are read as well; the original VERO `pt_BR` is ISO 8859-1).
+and Windows-1251 are read as well; the original VERO `pt_BR` is ISO 8859-1; TIS-620 is read for the Thai `th_TH` dictionary).
 
 ## Where WordCraft looks
 

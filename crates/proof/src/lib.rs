@@ -41,12 +41,14 @@
 //!   existing English fallback.
 //! - **German** ([`ProofLang::De`]): hyphenation by `hyph-utf8`'s German patterns (reformed
 //!   spelling, MIT); no spelling or grammar marks yet.
-//! - **Thai** ([`ProofLang::Th`], module [`th`]): spelling from the bundled PyThaiNLP word list
+//! - **Thai** ([`ProofLang::Th`], module [`th`]): spelling from an installed Hunspell `th_TH`
+//!   dictionary read at runtime (the user's dictionaries folder, then the system's, including
+//!   the TIS-620-encoded pair Thai proofing tools ship) or else the bundled PyThaiNLP word list
 //!   (CC0-1.0, compressed at build time and decompressed once), checked word by word over the
-//!   shared Thai segmenter ([`wordcraft_thai::segments`]); suggestions by edit distance. There
-//!   are no Thai grammar rules, and Thai hyphenation returns no breaks (never English patterns).
-//!   Without the bundled list Thai marks are off.//! - **Other languages** ([`ProofLang::Other`]): no spelling or grammar marks, like Word without
-//!   the language's proofing tools.
+//!   shared Thai segmenter ([`wordcraft_thai::segments`]); suggestions by edit distance and the
+//!   Hunspell `REP` pairs. There are no Thai grammar rules, and Thai hyphenation returns no
+//!   breaks (never English patterns). Without either source Thai marks are off.
+//! - **Other languages** ([`ProofLang::Other`]): no spelling or grammar marks, like Word without
 //! - **Hyphenation** ([`hyphen`]): dictionary, Liang patterns (English, Polish, Portuguese,
 //!   Italian, German), Bulgarian syllable rules, Russian word-division rules, heuristic.
 //!
@@ -176,7 +178,7 @@ pub fn set_dictionaries_folder(dir: Option<std::path::PathBuf>) {
     cs::reload_dictionary();
     id::reload_dictionary();
     es::reload_dictionary();
-    DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
+    th::reload_dictionary();    DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Each language that reads an installed Hunspell dictionary, with the `.dic` file found for it
@@ -420,7 +422,8 @@ fn known_core(w: &str) -> bool {
 /// of flagging every word against another language's dictionary; see [`ProofLang::from_tag`].
 pub fn has_dictionary(lang: Option<&str>) -> bool {
     match ProofLang::from_tag(lang) {
-        // Thai's dictionary is bundled, but a corrupt payload turns its marks off.
+        // Thai falls back to its bundled list, but a corrupt payload (and no installed pair)
+        // turns its marks off.
         ProofLang::Th => th::has_dictionary(),
         lang => lang.is_proofed(),
     }
@@ -710,12 +713,12 @@ pub fn check_spelling_in(text: &str, lang: ProofLang) -> Vec<Issue> {
 /// rescanned the token each time, so a long whitespace-free run of punctuation-separated words
 /// cost quadratic scanning (#1335).
 fn spelling_issues(text: &str, lang: impl Fn(usize) -> ProofLang, opts: &Options) -> Vec<Issue> {
-    spelling_issues_with_thai(text, &lang, opts, th::dictionary())
+    spelling_issues_with_thai(text, &lang, opts, th::dictionary().as_ref())
 }
 
 /// [`spelling_issues`] with the Thai dictionary given, so a test can check the no-dictionary
-/// path (no marks) without touching the shared bundled one.
-fn spelling_issues_with_thai(text: &str, lang: &impl Fn(usize) -> ProofLang, opts: &Options, thai: Option<&th::Dictionary>) -> Vec<Issue> {
+/// path (no marks) without touching the shared bundled or installed one.
+fn spelling_issues_with_thai(text: &str, lang: &impl Fn(usize) -> ProofLang, opts: &Options, thai: Option<&th::Active>) -> Vec<Issue> {
     let mut out = Vec::new();
     // Thai runs are checked word by word over the shared segmenter; the segmenter also splits
     // Latin, digits and punctuation out of a run, so only Thai segments are looked up.
@@ -1105,8 +1108,7 @@ mod tests {
     /// stays set for the rest of the run for that reason.
     #[test]
     fn dictionaries_folder_is_searched_first() {
-        let _guard = DICTIONARY_TESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let dir = std::env::temp_dir().join(format!("wc-proof-dictionaries-{}", std::process::id()));
+        let _guard = DICTIONARY_TESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);        let dir = std::env::temp_dir().join(format!("wc-proof-dictionaries-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (name, aff, dic) in [
             ("pl_PL", pl::test_dict::AFF, pl::test_dict::DIC),
@@ -1820,6 +1822,7 @@ mod tests {
 
     #[test]
     fn thai_spelling_marks_one_segment_per_misspelled_word() {
+        let _guard = th::test_lock();
         // A valid unspaced paragraph: every segment is a word in the bundled CC0 list.
         let valid = "ภาษาไทยเป็นภาษาที่สวยงาม";
         assert!(check_spelling_in(valid, ProofLang::Th).is_empty(), "{:?}", check_spelling_in(valid, ProofLang::Th));
@@ -1857,14 +1860,16 @@ mod tests {
 
     #[test]
     fn thai_without_a_dictionary_marks_nothing() {
+        let _guard = th::test_lock();
         // A corrupt/absent bundled list turns Thai marks off instead of marking everything.
         let text = "ภาษาไทนที่ผิด";
         assert!(spelling_issues_with_thai(text, &|_| ProofLang::Th, &Options::default(), None).is_empty());
-        assert!(spelling_issues_with_thai(text, &|_| ProofLang::Th, &Options::default(), th::Dictionary::from_text("").as_ref()).is_empty());
+        assert!(th::Dictionary::from_text("").is_none());
     }
 
     #[test]
     fn mixed_thai_span_checks_only_that_span() {
+        let _guard = th::test_lock();
         let text = "helo ภาษาและอมพิวเตอร์";
         let a = text.find("ภาษา").unwrap_or(0);
         let v = check_text(text, &[(a..text.len(), ProofLang::Th)]);

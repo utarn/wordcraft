@@ -4,7 +4,8 @@
 //! (Polish, Russian), it reads the standard Hunspell `.aff`/`.dic` pair installed by the operating system,
 //! a package manager or LibreOffice, with [`crate::affix::AffixDict::from_hunspell`]. When none is
 //! installed the language has no spelling check (no marks, no errors), like Word without the
-//! language's proofing tools.
+//! language's proofing tools. Thai's system dictionary is TIS-620 encoded; [`decode`] handles
+//! that alongside UTF-8 and the single-byte encodings older European dictionaries use.
 //!
 //! Search order: the directory in `WORDCRAFT_DICTIONARIES` (or one set with
 //! [`set_dictionary_dir`]), then the usual system locations. On the web there are none.
@@ -52,10 +53,16 @@ pub fn set_dictionary_dir(dir: Option<PathBuf>) {
     LOAD_ERRORS.write().unwrap_or_else(std::sync::PoisonError::into_inner).clear(); // they belong to the old search path
 }
 
+/// The folder set with [`set_dictionary_dir`], for tests that change it and must restore it.
+#[cfg(test)]
+pub(crate) fn dictionary_dir() -> Option<PathBuf> {
+    EXTRA_DIR.read().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
 /// The LibreOffice extension directories a Hunspell dictionary name may live in: LibreOffice's
 /// IDs are per dictionary — Polish is `dict-pl`, Brazilian Portuguese `dict-pt-BR` — so both
 /// the primary-language folder and the dashed full name are tried.
-fn lo_ext_dirs(name: &str) -> Vec<String> {
+pub(crate) fn lo_ext_dirs(name: &str) -> Vec<String> {
     let primary = name.split(['-', '_']).next().unwrap_or(name);
     let dashed = name.replace('_', "-");
     let first = format!("dict-{primary}");
@@ -63,9 +70,11 @@ fn lo_ext_dirs(name: &str) -> Vec<String> {
     if full == first { vec![first] } else { vec![first, full] }
 }
 
-/// Directories that may hold Hunspell dictionaries, most specific first. `lo_exts`, when a
-/// language is being searched for, adds LibreOffice's extension folders for it (`dict-pt-BR`).
-pub fn search_dirs(lo_exts: Option<&[String]>) -> Vec<PathBuf> {
+/// Directories the user chose for Hunspell dictionaries, most specific first: the folder set with
+/// [`set_dictionary_dir`] ("Dictionaries folder"), then `WORDCRAFT_DICTIONARIES`. These are
+/// searched before the system locations. The web has no filesystem, so only the setting (if a
+/// front end set one) is returned there.
+pub fn user_search_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = Vec::new();
     if let Some(d) = EXTRA_DIR.read().unwrap_or_else(std::sync::PoisonError::into_inner).clone() {
         dirs.push(d);
@@ -75,6 +84,17 @@ pub fn search_dirs(lo_exts: Option<&[String]>) -> Vec<PathBuf> {
     }
     if let Some(d) = std::env::var_os("WORDCRAFT_DICTIONARIES").filter(|v| !v.is_empty()) {
         dirs.push(PathBuf::from(d));
+    }
+    dirs
+}
+
+/// The usual operating-system, package-manager and LibreOffice locations, most specific first.
+/// `lo_exts`, when a language is being searched for, adds LibreOffice's extension folders for it
+/// (`dict-pt-BR`). Empty on the web.
+pub fn system_search_dirs(lo_exts: Option<&[String]>) -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    if cfg!(target_arch = "wasm32") {
+        return dirs;
     }
     // LibreOffice keeps each language under `…/share/extensions/<dict-xx>`.
     let lo_dirs =
@@ -124,6 +144,15 @@ pub fn search_dirs(lo_exts: Option<&[String]>) -> Vec<PathBuf> {
     dirs
 }
 
+/// Directories that may hold Hunspell dictionaries, most specific first: the user's folders,
+/// then the system locations. `lo_exts`, when a language is being searched for, adds
+/// LibreOffice's extension folders for it (`dict-pt-BR`).
+pub fn search_dirs(lo_exts: Option<&[String]>) -> Vec<PathBuf> {
+    let mut dirs = user_search_dirs();
+    dirs.extend(system_search_dirs(lo_exts));
+    dirs
+}
+
 /// The first `<name>.aff`/`<name>.dic` pair found for any of `names` (`pl_PL`, `pl`), searching
 /// [`search_dirs`] (including LibreOffice's extension folder for the first name).
 pub fn find(names: &[&str]) -> Option<(PathBuf, PathBuf)> {
@@ -142,6 +171,15 @@ pub fn find_in(dir: &Path, names: &[&str]) -> Option<(PathBuf, PathBuf)> {
 
 /// Read a Hunspell pair from disk (size-capped), decoded per the `.aff`'s `SET` line.
 pub fn load(aff: &Path, dic: &Path) -> Result<AffixDict, String> {
+    let (aff_text, dic_text) = read_decoded(aff, dic)?;
+    let source = format!("Hunspell dictionary {}", dic.display());
+    AffixDict::from_hunspell(&aff_text, &dic_text, &[source.as_str()])
+}
+
+/// Read a Hunspell `.aff`/`.dic` pair from disk (each file capped at [`MAX_FILE`]) and decode
+/// both to UTF-8 from the encoding the `.aff`'s `SET` line names. A directory, a missing file or
+/// a file over the cap is an error, never a panic.
+pub fn read_decoded(aff: &Path, dic: &Path) -> Result<(String, String), String> {
     let read = |p: &Path| -> Result<Vec<u8>, String> {
         let len = std::fs::metadata(p).map_err(|e| format!("{}: {e}", p.display()))?.len();
         if len > MAX_FILE {
@@ -149,9 +187,7 @@ pub fn load(aff: &Path, dic: &Path) -> Result<AffixDict, String> {
         }
         std::fs::read(p).map_err(|e| format!("{}: {e}", p.display()))
     };
-    let (aff_text, dic_text) = decode(&read(aff)?, &read(dic)?)?;
-    let source = format!("Hunspell dictionary {}", dic.display());
-    AffixDict::from_hunspell(&aff_text, &dic_text, &[source.as_str()])
+    decode(&read(aff)?, &read(dic)?)
 }
 
 /// ISO 8859-1: every byte is the code point of the same value (the original VERO pt_BR uses it).
@@ -182,9 +218,27 @@ fn decode_high(bytes: &[u8], high: &str) -> String {
     bytes.iter().map(|&b| if b < 0x80 { char::from(b) } else { high.get(usize::from(b - 0x80)).copied().unwrap_or('\u{fffd}') }).collect()
 }
 
+/// Decode TIS-620 (the encoding of the `th_TH` proofing dictionary): ASCII keeps its code, Thai
+/// occupies 0xA1..=0xDA and 0xDF..=0xFB contiguously from U+0E01 (0xDF is the baht sign,
+/// U+0E3F), 0xA0 is a no-break space and the reserved bytes become U+FFFD. The mapping is
+/// monotonic enough to compute, so there is no table to get wrong.
+fn decode_tis620(bytes: &[u8]) -> String {
+    const FIRST: u32 = 0x0E01;
+    bytes
+        .iter()
+        .map(|&b| match b {
+            0x00..=0x7F => char::from(b),
+            0xA0 => '\u{a0}',
+            0xA1..=0xDA | 0xDF..=0xFB => char::from_u32(FIRST.saturating_add(u32::from(b) - 0xA1)).unwrap_or('\u{fffd}'),
+            _ => '\u{fffd}',
+        })
+        .collect()
+}
+
 /// Decode an `.aff`/`.dic` pair to UTF-8 from the encoding the `.aff`'s `SET` line names
 /// (UTF-8 when there is none; ISO 8859-2 is the other one Polish dictionaries use, ISO 8859-1 the
-/// one the original Portuguese VERO uses, KOI8-R and Windows-1251 the ones older Russian dictionaries use).
+/// one the original Portuguese VERO uses, KOI8-R and Windows-1251 the ones older Russian dictionaries use,
+/// TIS-620 the Thai system dictionary).
 pub fn decode(aff: &[u8], dic: &[u8]) -> Result<(String, String), String> {
     let head = String::from_utf8_lossy(aff.get(..aff.len().min(8192)).unwrap_or_default()).to_string();
     let set = head.lines().find_map(|l| l.trim_start_matches('\u{feff}').strip_prefix("SET ")).map(str::trim).unwrap_or("UTF-8").to_ascii_uppercase();
@@ -197,6 +251,7 @@ pub fn decode(aff: &[u8], dic: &[u8]) -> Result<(String, String), String> {
         "ISO8859-2" | "ISO-8859-2" => Ok((decode_latin2(aff), decode_latin2(dic))),
         "KOI8-R" | "KOI8R" => Ok((decode_high(aff, KOI8_R_HIGH), decode_high(dic, KOI8_R_HIGH))),
         "CP1251" | "WINDOWS-1251" | "MICROSOFT-CP1251" => Ok((decode_high(aff, CP1251_HIGH), decode_high(dic, CP1251_HIGH))),
+        "TIS620" | "TIS-620" | "TIS620-2533" => Ok((decode_tis620(aff), decode_tis620(dic))),
         other => Err(format!("unsupported encoding {other}")),
     }
 }
@@ -253,6 +308,33 @@ mod tests {
         let (_, d) = decode(b"SET microsoft-cp1251\n", b"1\n\xb8\xeb\xea\xe0 \xc4\xee\xec\n").unwrap();
         assert_eq!(d, "1\nёлка Дом\n");
         assert_eq!(decode_high(&[0x98], CP1251_HIGH), "\u{fffd}");
+    }
+
+    #[test]
+    fn decodes_tis620_thai_dictionaries() {
+        // TIS-620: ASCII as itself, Thai at 0xA1.. (U+0E01..), 0xDF the baht sign.
+        let dic = [b'3', b'\n', 0xA1, 0xE7, b'\n', 0xB7, b'\n', 0xDF, b'\n'];
+        let (_, d) = decode(b"SET TIS620\n", &dic).unwrap();
+        assert_eq!(d, "3\nก็\nท\n฿\n");
+        // Reserved bytes become U+FFFD; decoding is total and never panics.
+        assert_eq!(super::decode_tis620(&[0x80, 0x9F, 0xDB, 0xDE, 0xFC, 0xFF]), "\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}\u{fffd}");
+        assert_eq!(super::decode_tis620(&[0xA0]), "\u{a0}");
+        for set in ["SET TIS-620\n", "SET tis620-2533\n"] {
+            assert!(decode(set.as_bytes(), b"1\n\xA1\n").is_ok(), "{set:?}");
+        }
+    }
+
+    #[test]
+    fn refuses_oversized_files_before_reading_them() {
+        let dir = std::env::temp_dir().join(format!("wordcraft-hunspell-big-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let aff = dir.join("big.aff");
+        let dic = dir.join("big.dic");
+        let f = std::fs::File::create(&aff).unwrap();
+        f.set_len(MAX_FILE.saturating_add(1)).unwrap();
+        std::fs::write(&dic, "1\ncat\n").unwrap();
+        assert!(read_decoded(&aff, &dic).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

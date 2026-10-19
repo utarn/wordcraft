@@ -70,11 +70,13 @@ pub enum ProofLang {
     /// spelling). There is no German dictionary or grammar yet, so, as for [`ProofLang::Other`],
     /// no spelling or grammar marks.
     De,
-    /// Thai (`th`, `th-TH`; also ISO 639-2 `tha`): spelling word by word from the bundled
-    /// CC0-1.0 PyThaiNLP word list over the shared Thai segmenter, dictionary-driven
-    /// suggestions, no grammar rules and no hyphenation breaks. Never checked with English
-    /// spelling, grammar or hyphenation.
-    Th,    /// A language without proofing tools here (`fr-FR`, `ja-JP`, `x-none`…). Like Word without
+    /// Thai (`th`, `th-TH`; also ISO 639-2 `tha`): spelling word by word from an installed
+    /// Hunspell `th_TH` dictionary (user folder, then system, read as TIS-620 when so encoded)
+    /// or else the bundled CC0-1.0 PyThaiNLP word list, over the shared Thai segmenter;
+    /// dictionary-driven suggestions, no grammar rules and no hyphenation breaks. Never checked
+    /// with English spelling, grammar or hyphenation.
+    Th,
+    /// A language without proofing tools here (`fr-FR`, `ja-JP`, `x-none`…). Like Word without
     /// the language's proofing tools: no spelling or grammar marks, so its words are never
     /// flagged as English misspellings. Hyphenation keeps using the English patterns, as before
     /// languages were told apart.
