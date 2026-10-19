@@ -393,6 +393,10 @@ pub struct ParaLayout {
     /// Room after a cluster between Asian text and Latin text or digits ([`auto_space`]), by
     /// cluster index, sorted. It is part of the cluster's advance, but takes no room at a line's end.
     pub auto_space: Vec<(usize, f32)>,
+    /// SARA AM (U+0E33) inside a cluster, by cluster index: the glyph that starts the SARA AM
+    /// part. UAX #29 joins SARA AM to the consonant before it, but Thai Distributed makes it a
+    /// distribution unit of its own, so the gap before it splits the cluster's glyphs.
+    pub sara_am: Vec<(usize, u32)>,
 }
 
 /// A shape drawn over a cluster (an enclosed character's circle, square, triangle or diamond),
@@ -611,6 +615,10 @@ struct Builder<'a> {
     levels: Vec<u8>,
     /// Text drawn by clusters that stand for an object, by cluster index (see `ParaLayout::shown`).
     shown: Vec<(usize, String, Vec<std::ops::Range<usize>>)>,
+    /// For a cluster holding SARA AM (U+0E33) after its first character: the index of the first
+    /// glyph that draws the SARA AM part. Thai Distributed treats it as a distribution unit of its
+    /// own (see [`ParaLayout::sara_am`]).
+    sara_am: Vec<(usize, u32)>,
 }
 
 /// What a piece of text is shaped as: one face, case, script formatting and direction.
@@ -1109,17 +1117,28 @@ impl<'a> Builder<'a> {
             for (bi, &gs) in bounds.iter().enumerate() {
                 let ge = bounds.get(bi + 1).copied().unwrap_or(shape_text.len());
                 let g0 = self.glyphs.len() as u32;
+                let s = shape_text.get(gs..ge).unwrap_or("");
+                // A SARA AM after the cluster's first character starts its own Thai Distributed
+                // unit: note the glyph it begins so a gap can go before it.
+                let am = s.char_indices().find(|(i, c)| *i > 0 && *c == '\u{0E33}').map(|(i, _)| gs + i);
+                let mut am_g = None;
                 let mut adv = 0.0f32;
                 while let Some(g) = shaped.get(gi) {
                     if g.cluster >= ge {
                         break;
+                    }
+                    if am_g.is_none() && am.is_some_and(|a| g.cluster >= a) {
+                        am_g = Some(self.glyphs.len() as u32);
                     }
                     self.glyphs.push(Glyph { gid: g.gid, dx: adv + g.x_offset as f32 * k * hscale, dy: g.y_offset as f32 * k });
                     adv += g.x_advance as f32 * k * hscale;
                     gi += 1;
                 }
                 let g1 = self.glyphs.len() as u32;
-                let s = shape_text.get(gs..ge).unwrap_or("");
+                let ci = self.clusters.len();
+                if let Some(g) = am_g {
+                    self.sara_am.push((ci, g));
+                }
                 let ch = s.chars().next().unwrap_or(' ');
                 let kind = kind_override.unwrap_or(if ch == ' ' || ch == '\u{3000}' {
                     ClKind::Space
@@ -1198,8 +1217,12 @@ impl<'a> Builder<'a> {
         let rtl_base = text.chars().find_map(strong_rtl).unwrap_or(around);
         let lv = bidi_levels(text, rtl_base);
         let before = self.clusters.len();
+        let before_am = self.sara_am.len();
         self.shape_with(text, start, rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) });
         let added: Vec<Cluster> = self.clusters.drain(before..).collect();
+        // The pieces are merged into one cluster below, so their SARA AM boundaries no longer mean
+        // anything.
+        self.sara_am.truncate(before_am);
         let Some(first) = added.first() else {
             let si = self.style(rc, None, false);
             let g = self.glyphs.len() as u32;
@@ -1493,8 +1516,16 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
     }
     let resolve = |c: &CharProps| -> Arc<ResolvedChar> { Arc::new(doc.styles.resolve_char_in(para_style, table_chr, c)) };
     let levels = bidi_levels(&p.text, rp.bidi);
-    let mut b =
-        Builder { env, styles: Vec::new(), style_index: Default::default(), glyphs: Vec::new(), clusters: Vec::new(), levels, shown: Vec::new() };
+    let mut b = Builder {
+        env,
+        styles: Vec::new(),
+        style_index: Default::default(),
+        glyphs: Vec::new(),
+        clusters: Vec::new(),
+        levels,
+        shown: Vec::new(),
+        sara_am: Vec::new(),
+    };
     let mark_rc = resolve(&p.mark);
     let mark_style = b.style(&mark_rc, None, false);
     let mut has_page_fields = false;
@@ -1936,6 +1967,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
         left_out: Vec::new(),
         enclosures,
         auto_space,
+        sara_am: b.sara_am,
     };
     let auto = env.doc.settings.auto_hyphenation && !pl.rp.suppress_hyphens;
     pl.hyph_after = hyphenation_points(&text, to_para, &pl, auto, env.doc.settings.hyphenate_caps, &runs);
@@ -1951,7 +1983,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
             c.break_after = true;
         }
     }
-    break_lines(&mut pl, env, mark_style, env.label.as_ref().map(|(_, l)| l));
+    break_lines(&mut pl, &p.text, env, mark_style, env.label.as_ref().map(|(_, l)| l));
     if gone {
         collapse(&mut pl);
     }
@@ -2044,9 +2076,113 @@ fn ptab_stop(align: PTabAlign, base: PTabBase, leader: TabLeader, width: f32, in
     TabStop { pos, align, leader }
 }
 
+/// A Thai-script letter, vowel, tone mark or digit: Thai Distributed gives each layout cluster of
+/// these its own gap. The baht sign is not one, so it stays inside the non-Thai token around it (as
+/// Latin letters, digits and punctuation do).
+fn thai_script_char(c: char) -> bool {
+    matches!(u32::from(c), 0x0E01..=0x0E3A | 0x0E40..=0x0E5B)
+}
+
+/// A start of a Thai Distributed unit: the cluster it begins at and, for SARA AM inside a cluster,
+/// the glyph that the gap goes before (`None`: at the cluster's left edge).
+struct ThaiUnitStart {
+    cluster: usize,
+    glyph: Option<u32>,
+}
+
+/// Distribute a line's positive slack between its Thai Distributed units, Word's way: one equal
+/// gap between each adjacent pair of units. Units are Thai clusters, whitespace-delimited runs of
+/// non-Thai text, each inline object, and the SARA AM part of a cluster. Spaces are separators
+/// that absorb the gap after the unit before them. Only bytes after `align_from` (the last tab)
+/// move. The line's end x is the last entry of `xs`.
+fn thai_distribute(pl: &mut ParaLayout, text: &str, xs: &mut [f32], c0: usize, c1: usize, align_from: usize, slack: f32) {
+    if !slack.is_finite() || slack <= 0.0 || c1 < c0 || xs.len() != c1 - c0 + 1 || align_from < c0 || align_from > c1 {
+        return;
+    }
+    // Trailing spaces, markers and breaks hang past the content and are not units.
+    let mut content_last = c1;
+    while content_last > align_from {
+        let Some(c) = pl.clusters.get(content_last - 1) else { break };
+        if matches!(c.kind, ClKind::Space | ClKind::Marker | ClKind::Tab | ClKind::LineBreak | ClKind::PageBreak | ClKind::ColumnBreak) {
+            content_last -= 1;
+        } else {
+            break;
+        }
+    }
+    // The units of the content after the last tab. `in_token` stays true across a run of non-Thai
+    // clusters (a Latin word, digits, punctuation) and resets at a space, a break or a Thai cluster.
+    let mut units: Vec<ThaiUnitStart> = Vec::new();
+    let mut in_token = false;
+    for k in align_from..content_last {
+        let Some(c) = pl.clusters.get(k) else { break };
+        match c.kind {
+            ClKind::Space | ClKind::Tab | ClKind::LineBreak | ClKind::PageBreak | ClKind::ColumnBreak => in_token = false,
+            // A zero-width marker (bookmark, comment anchor) never splits a token.
+            ClKind::Marker => {}
+            ClKind::Object(_) => {
+                units.push(ThaiUnitStart { cluster: k, glyph: None });
+                in_token = false;
+            }
+            ClKind::Text => {
+                let s = text.get(c.start..c.end).unwrap_or("");
+                if s.chars().next().is_some_and(thai_script_char) {
+                    units.push(ThaiUnitStart { cluster: k, glyph: None });
+                    in_token = false;
+                    // SARA AM starts a unit of its own inside the cluster. The gap goes before its
+                    // glyphs; the rest of the cluster stays where it is.
+                    if s.char_indices().any(|(i, ch)| i > 0 && ch == '\u{0E33}')
+                        && let Ok(at) = pl.sara_am.binary_search_by_key(&k, |e| e.0)
+                        && let Some(&(_, g)) = pl.sara_am.get(at)
+                        && (c.g0..c.g1).contains(&g)
+                    {
+                        units.push(ThaiUnitStart { cluster: k, glyph: Some(g) });
+                    }
+                } else if !in_token {
+                    units.push(ThaiUnitStart { cluster: k, glyph: None });
+                    in_token = true;
+                }
+            }
+        }
+    }
+    let Some(n) = units.len().checked_sub(1).filter(|n| *n > 0) else { return };
+    let per = slack / n as f32;
+    if !per.is_finite() || per <= 0.0 {
+        return;
+    }
+    // Move each cluster by the gaps before it, and the glyphs after a SARA AM by the gap inside
+    // its cluster. `units[0]` starts at `align_from` and takes no gap.
+    let mut gaps = 0usize;
+    let mut ui = 1usize;
+    for k in align_from..c1 {
+        if let Some(x) = xs.get_mut(k - c0) {
+            while units.get(ui).is_some_and(|u| u.cluster == k && u.glyph.is_none()) {
+                gaps = gaps.saturating_add(1);
+                ui += 1;
+            }
+            *x += per * gaps as f32;
+        }
+        let (g0, g1) = pl.clusters.get(k).map(|c| (c.g0, c.g1)).unwrap_or((0, 0));
+        while let Some(u) = units.get(ui).filter(|u| u.cluster == k) {
+            let Some(g) = u.glyph else { break };
+            gaps = gaps.saturating_add(1);
+            ui += 1;
+            for gi in g.max(g0)..g1 {
+                if let Some(gl) = pl.glyphs.get_mut(gi as usize) {
+                    gl.dx += per;
+                }
+            }
+        }
+    }
+    // The line's end x follows the last gap.
+    if let Some(end) = xs.get_mut(c1 - c0) {
+        *end += per * gaps as f32;
+    }
+}
+
+
 /// Break a paragraph into lines, measure each line, apply the paragraph's alignment and place
 /// the list label. Fills `pl.lines`, `pl.height` and the label's position.
-fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Option<&Level>) {
+fn break_lines(pl: &mut ParaLayout, text: &str, env: &ParaEnv, mark_style: u32, level: Option<&Level>) {
     // Narrow cells and float spans must retain their usable width.
     const MIN_LINE_WIDTH: f32 = 1.0;
     let suffix = level.map(|l| l.suffix);
@@ -2584,6 +2720,12 @@ fn break_lines(pl: &mut ParaLayout, env: &ParaEnv, mark_style: u32, level: Optio
         let shrink = display.is_none() && shrink_spaces && slack < 0.0 && last_tab.is_none();
         if shrink {
             shrink_line_spaces(pl, &mut xs, c0, c1, content_end, slack);
+        } else if rp.align == Align::ThaiDistribute {
+            // Thai Distributed: equal gaps between distribution units, on every line but the
+            // paragraph's last (a soft, page or column break ends a line that still distributes).
+            if display.is_none() && end != LineEnd::Para {
+                thai_distribute(pl, text, &mut xs, c0, c1, align_from, slack);
+            }
         } else if justify && slack > 0.0 {
             // Spaces inside the content (after the last tab).
             let spaces: Vec<usize> = (align_from..c1)
@@ -3302,7 +3444,7 @@ mod label_spacing_tests {
             (st.ascent, st.descent) = if i == label_style as usize { label_metrics } else { text_metrics };
         }
         let mark_style = pl.clusters[0].style;
-        break_lines(&mut pl, &env, mark_style, Some(&level));
+        break_lines(&mut pl, &p.text, &env, mark_style, Some(&level));
         pl.lines
     }
 
