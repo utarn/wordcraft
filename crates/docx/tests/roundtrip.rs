@@ -200,6 +200,7 @@ fn every_para_prop_round_trips() {
         ParaProps { line_spacing: Some(LineSpacing::AtLeast(14.0)), indent_first: Some(24.0), align: Some(Align::Center), ..Default::default() },
         ParaProps { line_spacing: Some(LineSpacing::Exactly(20.0)), align: Some(Align::Right), ..Default::default() },
         ParaProps { align: Some(Align::Distribute), ..Default::default() },
+        ParaProps { align: Some(Align::ThaiDistribute), ..Default::default() },
         ParaProps { kinsoku: Some(true), word_wrap: Some(true), auto_space_dn: Some(false), ..Default::default() },
         ParaProps::default(),
     ];
@@ -218,6 +219,44 @@ fn every_para_prop_round_trips() {
     for (i, v) in variants.iter().enumerate() {
         assert_eq!(&got[i + 1].props, v, "variant {i}");
     }
+}
+
+#[test]
+fn thai_distributed_round_trips_through_every_property_path() {
+    let mut para = Paragraph::with_text("ไทย", CharProps::default());
+    para.props.align = Some(Align::ThaiDistribute);
+    let mut cell_para = Paragraph::with_text("cell", CharProps::default());
+    cell_para.props.align = Some(Align::ThaiDistribute);
+    let mut table = Table::new(1, 1, 200.0);
+    table.props.align = Some(Align::ThaiDistribute);
+    table.rows[0].cells[0].blocks = vec![para_block(cell_para)];
+    let mut d = Document::new();
+    d.body = vec![para_block(para), Arc::new(Block::Table(table))];
+    // A style's paragraph properties.
+    d.styles.upsert(Style {
+        id: "Thai".into(),
+        name: "Thai".into(),
+        kind: StyleKind::Paragraph,
+        para: ParaProps { align: Some(Align::ThaiDistribute), ..Default::default() },
+        ..Default::default()
+    });
+    // A list level's justification (`w:lvlJc`).
+    let num = d.numbering.add_list(ListKind::Numbered);
+    if let Some(aid) = d.numbering.nums.iter().find(|n| n.id == num).map(|n| n.abstract_id)
+        && let Some(level) = d.numbering.abstracts.iter_mut().find(|a| a.id == aid).and_then(|a| a.levels.first_mut())
+    {
+        level.align = Align::ThaiDistribute;
+    }
+    let r = rt(&d);
+    let p = paras(&r);
+    assert_eq!(p[0].props.align, Some(Align::ThaiDistribute), "paragraph");
+    assert_eq!(r.styles.get("Thai").map(|s| s.para.align), Some(Some(Align::ThaiDistribute)), "style");
+    assert_eq!(r.numbering.level(num, 0).map(|l| l.align), Some(Align::ThaiDistribute), "list level");
+    let t = r.body[1].as_table().expect("table");
+    assert_eq!(t.rows[0].cells[0].blocks.first().and_then(|b| b.as_para()).and_then(|p| p.props.align), Some(Align::ThaiDistribute), "cell");
+    // Table alignment has no Thai distributed value: it is written as left, as justify and
+    // distribute are.
+    assert_eq!(t.props.align, Some(Align::Left), "table-level downgrade");
 }
 
 #[test]

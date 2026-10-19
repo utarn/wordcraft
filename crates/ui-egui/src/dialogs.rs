@@ -1696,7 +1696,14 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                             }
                         }
                     });
-                    const ALIGNS: [(&str, &str); 4] = [("left", "Left"), ("center", "Center"), ("right", "Right"), ("justify", "Justify")];
+                    const ALIGNS: [(&str, &str); 6] = [
+                        ("left", "Left"),
+                        ("center", "Center"),
+                        ("right", "Right"),
+                        ("justify", "Justify"),
+                        ("distribute", "Distributed"),
+                        ("thaiDistribute", "Thai Distributed"),
+                    ];
                     ui.horizontal(|ui| {
                         ui.label(tl!("Alignment:"));
                         let shown = if mixed.contains("align") {
@@ -3063,7 +3070,7 @@ fn paragraph_dialog(rp: &wordcraft_doc::resolve::ResolvedPara, tab: u8) -> Dialo
     let unit = crate::options::unit().pt_per_unit();
     Dialog::Paragraph {
         rtl: rp.bidi,
-        align: format!("{:?}", rp.align.visual(rp.bidi)).to_lowercase(),
+        align: rp.align.visual(rp.bidi).name().to_string(),
         left: vl / unit,
         right: vr / unit,
         first: rp.indent_first / unit,
@@ -4039,6 +4046,52 @@ mod tests {
         assert!(rtl);
         assert_eq!(align, "right", "a start-aligned right-to-left paragraph shows as right aligned");
         assert_eq!((left, right), (0.0, 0.5), "the start indent is the right one");
+    }
+
+    #[test]
+    fn paragraph_dialog_offers_and_selects_thai_distributed() {
+        use egui_kittest::kittest::Queryable;
+        let mut app = app_with("ภาษาไทย");
+        let _ = app.run("para.thaiDistribute", json!({}));
+        let Some(Dialog::Paragraph { align, .. }) = Dialog::open("paragraph", &mut app) else { panic!("no paragraph dialog") };
+        assert_eq!(align, "thaiDistribute", "the dialog shows the selected value");
+        app.dialog = Dialog::open("paragraph", &mut app);
+        let mut h = egui_kittest::Harness::builder().with_size(egui::vec2(1440.0, 900.0)).build_ui_state(
+            |ui, app: &mut WordApp| {
+                let ctx = ui.ctx().clone();
+                app.logic(&ctx);
+                app.ui(ui);
+            },
+            app,
+        );
+        for _ in 0..4 {
+            h.step();
+        }
+        h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox).click();
+        for _ in 0..3 {
+            h.step();
+        }
+        // Word's order, both distribution values included. The ribbon's own Left/Center/Right
+        // buttons sit behind the dialog, so look for at least one match rather than a unique one.
+        for label in ["Left", "Center", "Right", "Justify", "Distributed", "Thai Distributed"] {
+            assert!(h.query_all_by_label(label).next().is_some(), "{label} is listed");
+        }
+        h.get_by_label("Distributed").click();
+        for _ in 0..3 {
+            h.step();
+        }
+        let Some(Dialog::Paragraph { align, .. }) = &h.state().dialog else { panic!("no paragraph dialog") };
+        assert_eq!(align, "distribute");
+        h.get_by(|n| n.role() == egui::accesskit::Role::ComboBox).click();
+        for _ in 0..3 {
+            h.step();
+        }
+        h.get_by_label("Thai Distributed").click();
+        for _ in 0..3 {
+            h.step();
+        }
+        let Some(Dialog::Paragraph { align, .. }) = &h.state().dialog else { panic!("no paragraph dialog") };
+        assert_eq!(align, "thaiDistribute");
     }
 
     #[test]

@@ -1535,25 +1535,33 @@ mod tests {
     #[test]
     fn legacy_font_effects_are_drawn() {
         use wordcraft_doc::CharProps;
-        // Dark and grey pixel counts, and the grey pixels' mean offset from the dark ones.
-        let shot = |c: CharProps| {
+        let image = |c: CharProps| {
             let mut d = Document::from_text("x");
             let cp = CharProps { size: Some(40.0), bold: Some(true), ..c };
             d.body = vec![wordcraft_doc::para_block(wordcraft_doc::Paragraph::with_text("HHHH", cp))];
             let l = layout(&d, &mut LayoutCache::new(), &LayoutOptions::default());
-            let img = render_page(&d, &l.pages[0], 2.0, &RenderOptions::default());
-            let (mut dark, mut grey) = ((0.0, 0.0, 0.0f64), (0.0, 0.0, 0.0f64));
+            render_page(&d, &l.pages[0], 2.0, &RenderOptions::default())
+        };
+        let plain = image(CharProps::default());
+        // Dark and grey pixel counts, and the grey copy's mean offset from the dark letters. Only
+        // grey over the plain image's white background measures the copy: anti-aliasing along the
+        // letters' edges is symmetric and would drown out a shift of a few pixels.
+        let shot = |c: CharProps| {
+            let img = image(c);
+            let (mut dark, mut grey, mut copy) = ((0.0, 0.0, 0.0f64), (0.0, 0.0, 0.0f64), (0.0, 0.0, 0.0f64));
             for (x, y) in (100..800).flat_map(|x| (100..300).map(move |y| (x, y))) {
                 let v = img.pixel(x, y)[0];
-                let acc = match v {
-                    0..60 => &mut dark,
-                    100..=160 => &mut grey,
-                    _ => continue,
-                };
-                *acc = (acc.0 + 1.0, acc.1 + f64::from(x), acc.2 + f64::from(y));
+                if (0..60).contains(&v) {
+                    dark = (dark.0 + 1.0, dark.1 + f64::from(x), dark.2 + f64::from(y));
+                } else if (100..=160).contains(&v) {
+                    grey = (grey.0 + 1.0, grey.1 + f64::from(x), grey.2 + f64::from(y));
+                    if plain.pixel(x, y)[0] > 200 {
+                        copy = (copy.0 + 1.0, copy.1 + f64::from(x), copy.2 + f64::from(y));
+                    }
+                }
             }
             let mean = |a: (f64, f64, f64)| (a.1 / a.0.max(1.0), a.2 / a.0.max(1.0));
-            let ((dx, dy), (gx, gy)) = (mean(dark), mean(grey));
+            let ((dx, dy), (gx, gy)) = (mean(dark), mean(copy));
             (dark.0, grey.0, (gx - dx, gy - dy))
         };
         let (plain_dark, plain_grey, _) = shot(CharProps::default());

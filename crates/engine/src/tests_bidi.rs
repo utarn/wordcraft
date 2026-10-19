@@ -94,6 +94,35 @@ fn para_set_on_page_follows_each_paragraphs_own_direction() {
 }
 
 #[test]
+fn thai_distributed_is_its_own_alignment_value() {
+    let mut s = session("ภาษาไทย\nEnglish", false);
+    run(&mut s, "caret.docStart", json!({}));
+    run(&mut s, "para.thaiDistribute", json!({}));
+    assert_eq!(props(&s, 0).align, Some(Align::ThaiDistribute), "a value distinct from Distributed");
+    assert_eq!(props(&s, 1).align, None, "only the selected paragraph");
+    // Pressing the command again returns to the start edge.
+    run(&mut s, "para.thaiDistribute", json!({}));
+    assert_eq!(props(&s, 0).align, Some(Align::Left));
+    // The generic paragraph-alignment and paragraph-properties commands accept it.
+    run(&mut s, "para.align", json!({"value": "thaiDistribute"}));
+    assert_eq!(props(&s, 0).align, Some(Align::ThaiDistribute));
+    run(&mut s, "para.set", json!({"props": {}, "onPage": {"align": "thaiDistribute"}}));
+    assert_eq!(props(&s, 0).align, Some(Align::ThaiDistribute));
+    // Generic `distribute` stays a separate value.
+    run(&mut s, "para.align", json!({"value": "distribute"}));
+    assert_eq!(props(&s, 0).align, Some(Align::Distribute));
+    // Direction-independent: right-to-left paragraphs keep it, and toggling returns to their
+    // start edge (the logical left).
+    run(&mut s, "select.all", json!({}));
+    run(&mut s, "para.rtl", json!({}));
+    run(&mut s, "caret.docStart", json!({}));
+    run(&mut s, "para.thaiDistribute", json!({}));
+    assert_eq!(props(&s, 0).align, Some(Align::ThaiDistribute));
+    run(&mut s, "para.thaiDistribute", json!({}));
+    assert_eq!(props(&s, 0).align, Some(Align::Left), "the right-to-left paragraph's start edge");
+}
+
+#[test]
 fn font_commands_reach_persian_text() {
     let mut s = session("کتاب خوب", true);
     run(&mut s, "select.all", json!({}));
