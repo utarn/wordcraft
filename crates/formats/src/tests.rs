@@ -875,3 +875,18 @@ fn hidden_drawings_are_left_out_of_exports() {
     // Two pictures, one hidden: one comes out.
     assert_eq!(crate::html::export(&d).matches("<img").count(), 1);
 }
+
+/// Thai distributed has no representation of its own in these formats; it exports as their
+/// justified alignment, as Word's own exports do.
+#[test]
+fn thai_distributed_exports_as_justified() {
+    let mut p = Paragraph::with_text("ไทย", CharProps::default());
+    p.props.align = Some(Align::ThaiDistribute);
+    let mut d = Document::new();
+    d.body = vec![para_block(p)];
+    for ext in ["html", "rtf", "odt"] {
+        let bytes = export(ext, &d).expect("handled").expect("export");
+        let back = import(ext, &bytes).expect("handled").expect("import");
+        assert_eq!(find_para(&flat(&back), "ไทย").and_then(|p| p.align), Some(Align::Justify), "{ext}");
+    }
+}

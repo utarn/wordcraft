@@ -183,7 +183,7 @@ the distance from the text). Missing fields are `none`, 0, no colour and 0, so a
 | Field | Type | Values |
 |---|---|---|
 | `style` | string | paragraph style id |
-| `align` | string | `left`, `center`, `right`, `justify`, `distribute` (`left` is the start edge: the right in a right-to-left paragraph) |
+| `align` | string | `left`, `center`, `right`, `justify`, `distribute`, `thaiDistribute` (`left` is the start edge: the right in a right-to-left paragraph) |
 | `indentLeft`, `indentRight` | number | points |
 | `indentFirst` | number | first-line indent, points; negative = hanging |
 | `indentLeftChars`, `indentRightChars`, `indentFirstChars` | number | the same indents in characters; a non-zero value wins over the one in points, 0 cancels an inherited one |
@@ -204,7 +204,7 @@ the distance from the text). Missing fields are `none`, 0, no colour and 0, so a
 | `topLinePunct` | bool | East Asian typography; unset = off |
 | `numChange`, `fmtChange` | | Track Changes bookkeeping |
 
-`para.set` also takes `"onPage": {"align"?: "left|center|right|justify|distribute", "left"?: pt,
+`para.set` also takes `"onPage": {"align"?: "left|center|right|justify|distribute|thaiDistribute", "left"?: pt,
 "right"?: pt}`: the alignment and indents as seen on the page, which each selected paragraph turns
 into its own start and end once `props` (a `bidi` in it, say) is applied. The Paragraph dialog sends
 only the fields that changed this way, as one command and so one undo step.

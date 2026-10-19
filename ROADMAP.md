@@ -909,6 +909,7 @@ Footer page-table height and body wrapping are corrected. Other pagination gaps 
 | 2026-10-11 | trivial | Progress log: Outline view (#493) |
 | 2026-10-11 | trivial | Progress log: vertical sections (#491) |
 | 2026-10-11 | trivial | Progress log: Paragraph dialog options, mirror indents (#512) |
+| 2026-10-18 | trivial | Thai Distributed is a distinct paragraph alignment (`w:jc="thaiDistribute"`), preserved through DOCX paragraph, style, list-level and table-cell properties, exposed as `para.thaiDistribute` and in the Paragraph dialog; catalog 493/508 (97.0%) |
 | 2026-10-11 | trivial | Progress log: Print Markup (#589) |
 | 2026-10-11 | trivial | Progress log: custom colours via More Colors… (#606) |
 | 2026-10-11 | trivial | Progress log: complex-script shaping (#604) |

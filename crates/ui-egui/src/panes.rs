@@ -861,6 +861,7 @@ fn describe(prop: &str, v: &Value) -> String {
             "right" => "Right",
             "justify" => "Justified",
             "distribute" => "Distributed",
+            "thaiDistribute" => "Thai Distributed",
             _ => "Left",
         })
         .to_string(),
@@ -905,6 +906,15 @@ fn camel_words(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The state surface names Thai distributed apart from distributed.
+    #[test]
+    fn thai_distributed_is_named_in_the_state_surface() {
+        use super::describe;
+        assert_eq!(describe("align", &serde_json::json!("thaiDistribute")), "Alignment: Thai Distributed");
+        assert_eq!(describe("align", &serde_json::json!("distribute")), "Alignment: Distributed");
+        assert_eq!(describe("align", &serde_json::json!("left")), "Alignment: Left");
+    }
+
     /// #1902: Clipboard Delete returns focus to the document like paste does.
     #[test]
     #[cfg(not(target_arch = "wasm32"))]

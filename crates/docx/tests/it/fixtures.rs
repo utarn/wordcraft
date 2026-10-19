@@ -49,6 +49,25 @@ fn read_body(body: &str) -> Document {
 }
 
 #[test]
+fn alignment_values_read_distinctly_and_unknown_reads_left() {
+    for (val, want) in [
+        ("left", Align::Left),
+        ("start", Align::Left),
+        ("center", Align::Center),
+        ("right", Align::Right),
+        ("both", Align::Justify),
+        ("justify", Align::Justify),
+        ("distribute", Align::Distribute),
+        ("thaiDistribute", Align::ThaiDistribute),
+        ("notAnAlignment", Align::Left),
+    ] {
+        let d = read_body(&format!("<w:p><w:pPr><w:jc w:val=\"{val}\"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>"));
+        let got = d.body.iter().filter_map(|b| b.as_para()).next().and_then(|p| p.props.align);
+        assert_eq!(got, Some(want), "w:jc={val}");
+    }
+}
+
+#[test]
 fn paragraph_default_presence_survives_repeated_saves() {
     // Omission leaves paragraph defaults application-defined (ISO 29500 pPrDefault).
     // An explicitly empty container must therefore remain distinct from omission.
