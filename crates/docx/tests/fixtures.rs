@@ -2830,6 +2830,59 @@ fn bidi_theme_slots_name_the_complex_script_font() {
     assert_eq!(font("Times New Roman").as_deref(), Some("Times New Roman"));
 }
 
+/// `w:cstheme` and the drawing theme's Thai script typeface become the requested Thai family,
+/// and both survive a save (#18).
+#[test]
+fn thai_theme_typeface_is_read_and_round_trips() {
+    let theme = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="T"><a:themeElements><a:fontScheme name="F"><a:majorFont><a:latin typeface="Cambria"/><a:ea typeface=""/><a:cs typeface="Arial"/><a:font script="Thai" typeface="Angsana New"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface="Times New Roman"/><a:font script="Thai" typeface="TH Sarabun New"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#;
+    let rels = [("rId9", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "theme/theme1.xml")];
+    let body = r#"<w:p><w:r><w:rPr><w:rFonts w:cstheme="minorBidi"/><w:szCs w:val="32"/></w:rPr><w:t>ไทย</w:t></w:r></w:p>"#;
+    let d = wordcraft_docx::read(&docx(body, &rels, &[("word/theme/theme1.xml", theme)])).unwrap();
+    // The Thai typeface is kept as the requested Thai family; other complex scripts keep the
+    // theme's generic complex-script font.
+    let c = &paras(&d)[0].runs[0].props;
+    assert_eq!(c.font_cs.as_deref(), Some("Times New Roman"));
+    assert_eq!(c.font_cs_thai.as_deref(), Some("TH Sarabun New"));
+    assert_eq!(c.font_cs_theme.as_deref(), Some("minorBidi"));
+    assert_eq!(c.size_cs, Some(16.0));
+    assert_eq!(d.settings.minor_thai_font, "TH Sarabun New");
+    assert_eq!(d.settings.major_thai_font, "Angsana New");
+    assert_eq!(d.settings.minor_cs_font, "Times New Roman");
+
+    // A save writes the theme reference back on the run and both theme entries in theme1.xml.
+    let bytes = wordcraft_docx::write(&d).unwrap();
+    let files = unzip(&bytes);
+    let document = text(&files, "word/document.xml");
+    assert!(document.contains(r#"w:cstheme="minorBidi""#), "{document}");
+    let theme = text(&files, "word/theme/theme1.xml");
+    assert!(theme.contains(r#"<a:font script="Thai" typeface="TH Sarabun New"/>"#), "{theme}");
+    assert!(theme.contains(r#"<a:font script="Thai" typeface="Angsana New"/>"#), "{theme}");
+    assert!(theme.contains(r#"<a:cs typeface="Times New Roman"/>"#), "{theme}");
+    assert!(theme.contains(r#"<a:cs typeface="Arial"/>"#), "{theme}");
+
+    // Reopened, the run still resolves to the theme's Thai family.
+    let again = wordcraft_docx::read(&bytes).unwrap();
+    let c = &paras(&again)[0].runs[0].props;
+    assert_eq!(
+        (c.font_cs.as_deref(), c.font_cs_thai.as_deref(), c.font_cs_theme.as_deref(), c.size_cs),
+        (Some("Times New Roman"), Some("TH Sarabun New"), Some("minorBidi"), Some(16.0))
+    );
+    assert_eq!(again.settings.minor_thai_font, "TH Sarabun New");
+}
+
+/// A `w:cstheme` slot with no Thai script typeface uses the theme's `a:cs` font.
+#[test]
+fn cs_theme_without_a_thai_typeface_uses_the_complex_script_font() {
+    let theme = r#"<?xml version="1.0" encoding="UTF-8" standalone="yes"?><a:theme xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" name="T"><a:themeElements><a:fontScheme name="F"><a:majorFont><a:latin typeface="Cambria"/><a:ea typeface=""/><a:cs typeface="Arial"/></a:majorFont><a:minorFont><a:latin typeface="Calibri"/><a:ea typeface=""/><a:cs typeface="Times New Roman"/></a:minorFont></a:fontScheme></a:themeElements></a:theme>"#;
+    let rels = [("rId9", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme", "theme/theme1.xml")];
+    let body = r#"<w:p><w:r><w:rPr><w:rFonts w:cstheme="majorBidi"/></w:rPr><w:t>x</w:t></w:r></w:p>"#;
+    let d = wordcraft_docx::read(&docx(body, &rels, &[("word/theme/theme1.xml", theme)])).unwrap();
+    let c = &paras(&d)[0].runs[0].props;
+    assert_eq!((c.font_cs.as_deref(), c.font_cs_theme.as_deref()), (Some("Arial"), Some("majorBidi")));
+    assert!(c.font_cs_thai.is_none());
+    assert!(d.settings.major_thai_font.is_empty());
+}
+
 /// The font table's family classes: Word draws a missing roman font in a serif face.
 #[test]
 fn roman_fonts_are_read_from_the_font_table() {

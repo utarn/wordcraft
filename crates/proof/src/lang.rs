@@ -39,6 +39,12 @@ pub enum ProofLang {
     /// `id_ID` dictionary, dictionary-driven suggestions and generic checks with Indonesian
     /// messages. Hyphenation keeps the fallback English patterns.
     Id,
+    /// Thai (`th`, `th-TH`; also ISO 639-2 `tha`): spelling word by word from an installed
+    /// Hunspell `th_TH` dictionary (user folder, then system, read as TIS-620 when so encoded)
+    /// or else the bundled CC0-1.0 PyThaiNLP word list, over the shared Thai segmenter;
+    /// dictionary-driven suggestions, no grammar rules and no hyphenation breaks. Never checked
+    /// with English spelling, grammar or hyphenation.
+    Th,
     /// A language without proofing tools here (`fr-FR`, `ja-JP`, `x-none`…). Like Word without
     /// the language's proofing tools: no spelling or grammar marks, so its words are never
     /// flagged as English misspellings. Hyphenation keeps using the English patterns, as before
@@ -48,8 +54,18 @@ pub enum ProofLang {
 
 impl ProofLang {
     /// Every language with a spelling dictionary, in display order.
-    pub const PROOFED: [ProofLang; 9] =
-        [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Hr, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id];
+    pub const PROOFED: [ProofLang; 10] = [
+        ProofLang::En,
+        ProofLang::Pl,
+        ProofLang::Pt,
+        ProofLang::It,
+        ProofLang::Hr,
+        ProofLang::Tr,
+        ProofLang::Ru,
+        ProofLang::Cs,
+        ProofLang::Id,
+        ProofLang::Th,
+    ];
 
     /// The proofing language of a BCP 47 tag (`pl-PL`, `en_GB`, `PL`…). Only the primary subtag
     /// counts. No tag (or an empty one) is English, WordCraft's default editing language.
@@ -76,6 +92,8 @@ impl ProofLang {
             ProofLang::Cs
         } else if primary.eq_ignore_ascii_case("id") || primary.eq_ignore_ascii_case("ind") || primary.eq_ignore_ascii_case("in") {
             ProofLang::Id
+        } else if primary.eq_ignore_ascii_case("th") || primary.eq_ignore_ascii_case("tha") {
+            ProofLang::Th
         } else {
             ProofLang::Other
         }
@@ -94,6 +112,7 @@ impl ProofLang {
             ProofLang::Ru => "ru",
             ProofLang::Cs => "cs",
             ProofLang::Id => "id",
+            ProofLang::Th => "th",
             ProofLang::Other => "",
         }
     }
@@ -183,6 +202,11 @@ mod tests {
         }
         assert_eq!(ProofLang::Id.code(), "id");
         assert!(ProofLang::Id.is_proofed() && ProofLang::PROOFED.contains(&ProofLang::Id));
+        for t in ["th", "th-TH", "TH_th", "th_TH", "th_TH.UTF-8", " th-TH ", "tha"] {
+            assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Th, "{t}");
+        }
+        assert_eq!(ProofLang::Th.code(), "th");
+        assert!(ProofLang::Th.is_proofed() && ProofLang::PROOFED.contains(&ProofLang::Th));
         for t in ["en", "en-US", "en-GB", "EN_au", "en-Latn-US"] {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::En, "{t}");
         }
@@ -192,7 +216,7 @@ mod tests {
         for t in ["tr", "tr-TR", "tr-CY", "TR_tr", "tur"] {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Tr, "{t}");
         }
-        for t in ["fr-FR", "de", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "e", "-"] {
+        for t in ["fr-FR", "de", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "thx", "e", "-"] {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Other, "{t}");
         }
         assert_eq!(ProofLang::from_tag(None), ProofLang::En);

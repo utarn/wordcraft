@@ -11,6 +11,10 @@ workspace = true
 [dependencies]
 log = { workspace = true }
 miniz_oxide = "0.8"
+wordcraft-thai = { workspace = true }
+
+[build-dependencies]
+miniz_oxide = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }

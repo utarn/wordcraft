@@ -34,6 +34,13 @@
 //! - **Indonesian** ([`ProofLang::Id`], module [`id`]): the installed Hunspell `id_ID`
 //!   dictionary (not bundled), dictionary-driven suggestions and generic checks with Indonesian
 //!   messages. Hyphenation uses the existing English fallback.
+//! - **Thai** ([`ProofLang::Th`], module [`th`]): spelling from an installed Hunspell `th_TH`
+//!   dictionary read at runtime (the user's dictionaries folder, then the system's, including
+//!   the TIS-620-encoded pair Thai proofing tools ship) or else the bundled PyThaiNLP word list
+//!   (CC0-1.0, compressed at build time and decompressed once), checked word by word over the
+//!   shared Thai segmenter ([`wordcraft_thai::segments`]); suggestions by edit distance and the
+//!   Hunspell `REP` pairs. There are no Thai grammar rules, and Thai hyphenation returns no
+//!   breaks (never English patterns). Without either source Thai marks are off.
 //! - **Other languages** ([`ProofLang::Other`]): no spelling or grammar marks, like Word without
 //!   the language's proofing tools.
 //! - **Hyphenation** ([`hyphen`]): dictionary, Liang patterns (English, Polish, Portuguese),
@@ -56,6 +63,7 @@ pub mod patterns;
 pub mod pl;
 pub mod pt;
 pub mod ru;
+pub mod th;
 pub mod tr;
 pub mod vi;
 
@@ -151,6 +159,7 @@ pub fn set_dictionaries_folder(dir: Option<std::path::PathBuf>) {
     hr::reload_dictionary();
     tr::reload_dictionary();
     id::reload_dictionary();
+    th::reload_dictionary();
     DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -367,7 +376,12 @@ fn known_core(w: &str) -> bool {
 /// document default, which is en-US. Runs in a language without one are skipped (#100) instead
 /// of flagging every word against another language's dictionary; see [`ProofLang::from_tag`].
 pub fn has_dictionary(lang: Option<&str>) -> bool {
-    ProofLang::from_tag(lang).is_proofed()
+    match ProofLang::from_tag(lang) {
+        // Thai falls back to its bundled list, but a corrupt payload (and no installed pair)
+        // turns its marks off.
+        ProofLang::Th => th::has_dictionary(),
+        lang => lang.is_proofed(),
+    }
 }
 
 /// The Hunspell dictionary name (`pl_PL`, `pt_BR`) a proofing language needs but doesn't have
@@ -412,7 +426,7 @@ fn accepted_by_options(word: &str, opts: &Options) -> bool {
     w.chars().count() <= 1
         || !w.chars().any(char::is_alphabetic)
         || (opts.ignore_numbers && w.chars().any(|c| c.is_ascii_digit()))
-        || (opts.ignore_uppercase && w.chars().all(|c| !c.is_lowercase()))
+        || (opts.ignore_uppercase && w.chars().any(char::is_uppercase) && w.chars().all(|c| !c.is_lowercase()))
 }
 
 /// [`is_correct`] with the File › Options › Proofing choices.
@@ -477,7 +491,7 @@ pub fn suggest(word: &str, max: usize) -> Vec<String> {
 }
 
 /// Optimal string alignment distance, early-exit at 3.
-fn damerau(a: &[char], b: &str) -> usize {
+pub(crate) fn damerau(a: &[char], b: &str) -> usize {
     let b: Vec<char> = b.chars().collect();
     let (n, m) = (a.len(), b.len());
     let mut prev2 = vec![0usize; m + 1];
@@ -566,16 +580,41 @@ pub fn check_spelling_in(text: &str, lang: ProofLang) -> Vec<Issue> {
 /// rescanned the token each time, so a long whitespace-free run of punctuation-separated words
 /// cost quadratic scanning (#1335).
 fn spelling_issues(text: &str, lang: impl Fn(usize) -> ProofLang, opts: &Options) -> Vec<Issue> {
-    let mut token = (0, 0, false);
-    words(text)
-        .into_iter()
-        .filter_map(|(a, b)| {
-            if a < token.0 || a >= token.1 {
-                token = enclosing_token(text, a, b);
+    spelling_issues_with_thai(text, &lang, opts, th::dictionary().as_ref())
+}
+
+/// [`spelling_issues`] with the Thai dictionary given, so a test can check the no-dictionary
+/// path (no marks) without touching the shared bundled or installed one.
+fn spelling_issues_with_thai(text: &str, lang: &impl Fn(usize) -> ProofLang, opts: &Options, thai: Option<&th::Active>) -> Vec<Issue> {
+    let mut out = Vec::new();
+    // Thai runs are checked word by word over the shared segmenter; the segmenter also splits
+    // Latin, digits and punctuation out of a run, so only Thai segments are looked up.
+    if text.chars().any(wordcraft_thai::is_thai_word_char) {
+        for segment in wordcraft_thai::segments(text) {
+            if lang(segment.start) != ProofLang::Th {
+                continue;
             }
-            spelling_issue(text, a, b, lang(a), opts, token.2)
-        })
-        .collect()
+            if let Some(issue) = th::segment_issue(text, segment, thai) {
+                out.push(issue);
+            }
+        }
+    }
+    let mut token = (0, 0, false);
+    for (a, b) in words(text) {
+        let language = lang(a);
+        // Thai (and any Latin inside a Thai span) is handled above and never checked as English.
+        if language == ProofLang::Th {
+            continue;
+        }
+        if a < token.0 || a >= token.1 {
+            token = enclosing_token(text, a, b);
+        }
+        if let Some(issue) = spelling_issue(text, a, b, language, opts, token.2) {
+            out.push(issue);
+        }
+    }
+    out.sort_by_key(|i| (i.start, i.end));
+    out
 }
 
 /// The whitespace-delimited token enclosing the word at `a..b` of `text`: its byte range, and
@@ -627,6 +666,7 @@ pub fn is_correct_in_with(word: &str, lang: ProofLang, opts: &Options) -> bool {
         ProofLang::Ru => accepted_by_options(word, opts) || ru::is_correct(word),
         ProofLang::Cs => accepted_by_options(word, opts) || cs::is_correct(word),
         ProofLang::Id => accepted_by_options(word, opts) || id::is_correct(word),
+        ProofLang::Th => accepted_by_options(word, opts) || th::is_correct(word),
         ProofLang::Bg | ProofLang::Other => true,
     }
 }
@@ -643,6 +683,7 @@ pub fn suggest_in(word: &str, max: usize, lang: ProofLang) -> Vec<String> {
         ProofLang::Ru => ru::suggest(word, max),
         ProofLang::Cs => cs::suggest(word, max),
         ProofLang::Id => id::suggest(word, max),
+        ProofLang::Th => th::suggest(word, max),
         ProofLang::Bg | ProofLang::Other => Vec::new(),
     }
 }
@@ -661,7 +702,8 @@ pub fn check_grammar_in(text: &str, lang: ProofLang) -> Vec<Issue> {
         ProofLang::Ru => ru::grammar::check(text),
         ProofLang::Cs => cs::grammar::check(text),
         ProofLang::Id => id::grammar::check(text),
-        ProofLang::Bg | ProofLang::Other => Vec::new(),
+        // Thai grammar is not checked: no rule is inferred from English (issue #17).
+        ProofLang::Th | ProofLang::Bg | ProofLang::Other => Vec::new(),
     }
 }
 
@@ -859,6 +901,7 @@ mod tests {
     /// stays set for the rest of the run for that reason.
     #[test]
     fn dictionaries_folder_is_searched_first() {
+        let _guard = th::test_lock();
         let dir = std::env::temp_dir().join(format!("wc-proof-dictionaries-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (name, aff, dic) in [
@@ -1234,6 +1277,63 @@ mod tests {
     }
 
     #[test]
+    fn thai_spelling_marks_one_segment_per_misspelled_word() {
+        let _guard = th::test_lock();
+        // A valid unspaced paragraph: every segment is a word in the bundled CC0 list.
+        let valid = "ภาษาไทยเป็นภาษาที่สวยงาม";
+        assert!(check_spelling_in(valid, ProofLang::Th).is_empty(), "{:?}", check_spelling_in(valid, ProofLang::Th));
+        // One genuinely misspelled word: exactly one mark, over that segment only.
+        let text = "ภาษาไทยเป็นอมพิวเตอร์ที่สวยงาม";
+        let v = check_spelling_in(text, ProofLang::Th);
+        assert_eq!(flagged(text, &v), ["เตอร\u{0E4C}"], "{v:?}");
+        assert_eq!((v[0].lang, v[0].message.as_str()), (ProofLang::Th, "อาจสะกดผิด"));
+        // Compounds are not flagged, and maiyamok attaches to the word before it.
+        for text in ["ประเทศไทย", "ดีๆ", "สวยๆ", "น้ำแข็ง", "กรุงเทพฯ", "ฯลฯ"] {
+            assert!(check_spelling_in(text, ProofLang::Th).is_empty(), "{text}: {:?}", check_spelling_in(text, ProofLang::Th));
+        }
+        // Latin, digits and punctuation inside a Thai span are not checked as Thai or English.
+        for text in ["ภาษาไทย 123 abc, อมพิวเตอร์", "ภาษาabcไทย"] {
+            let v = check_spelling_in(text, ProofLang::Th);
+            assert!(v.iter().all(|i| &text[i.start..i.end] == "เตอร\u{0E4C}"), "{text}: {v:?}");
+        }
+        assert!(check_spelling_in("ภาษาไทย 123 abc.", ProofLang::Th).is_empty());
+        // Suggestions come from the Thai list, bounded.
+        let s = suggest_in("ไทน", 5, ProofLang::Th);
+        assert!(s.contains(&"ไทย".to_string()), "{s:?}");
+        assert!(suggest_in("ไทน", 100, ProofLang::Th).len() <= 10);
+        // Grammar is not checked, and hyphenation never uses the English patterns.
+        assert!(check_grammar_in("ภาษาไทย ภาษาไทย", ProofLang::Th).is_empty());
+        let lim = hyphen::Limits::default();
+        assert!(hyphen::hyphen_points_in("ภาษาไทย", &lim, ProofLang::Th).is_empty());
+        assert!(hyphen::hyphen_points_in("hyphenation", &lim, ProofLang::Th).is_empty());
+        assert_eq!(hyphen::word_breaks_in("internationalization", ProofLang::Th).1, hyphen::Source::None);
+        // The bundled dictionary is found without a system dictionary.
+        assert!(has_dictionary(Some("th")) && has_dictionary(Some("th-TH")) && has_dictionary(Some("tha")));
+        assert!(is_correct_in("ภาษาไทย", ProofLang::Th) && !is_correct_in("ไทน", ProofLang::Th));
+        // English is not used for Thai text: a Thai word is not an English misspelling.
+        assert!(check_spelling_in("ภาษาไทน", ProofLang::En).is_empty(), "Thai script isn't checked as English");
+    }
+
+    #[test]
+    fn thai_without_a_dictionary_marks_nothing() {
+        let _guard = th::test_lock();
+        // A corrupt/absent bundled list turns Thai marks off instead of marking everything.
+        let text = "ภาษาไทนที่ผิด";
+        assert!(spelling_issues_with_thai(text, &|_| ProofLang::Th, &Options::default(), None).is_empty());
+        assert!(th::Dictionary::from_text("").is_none());
+    }
+
+    #[test]
+    fn mixed_thai_span_checks_only_that_span() {
+        let _guard = th::test_lock();
+        let text = "helo ภาษาและอมพิวเตอร์";
+        let a = text.find("ภาษา").unwrap_or(0);
+        let v = check_text(text, &[(a..text.len(), ProofLang::Th)]);
+        assert_eq!(flagged(text, &v), ["helo", "เตอร\u{0E4C}"], "{v:?}");
+        assert!(v.iter().any(|i| i.lang == ProofLang::En) && v.iter().filter(|i| i.lang == ProofLang::Th).count() == 1);
+    }
+
+    #[test]
     fn each_language_uses_its_own_tools() {
         pl::test_dict::install();
         let pl = "Zażółć gęślą jaźń, chrząszcz brzmi w trzcinie.";
@@ -1310,7 +1410,7 @@ mod tests {
             let _ = has_dictionary(Some(&s));
             let _ = is_correct_for(&s, Some(&s));
             let _ = hyphen::hyphen_points(&s, &hyphen::Limits::default());
-            for lang in [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Hr, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Other] {
+            for lang in [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Hr, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Th, ProofLang::Other] {
                 let _ = check_spelling_in(&s, lang);
                 let _ = check_grammar_in(&s, lang);
                 let _ = is_correct_in(&s, lang);
@@ -1354,8 +1454,8 @@ mod tests {
         }
 
         #[test]
-        fn mixed_spans_never_panic(s in "\\PC{0,60}", cuts in proptest::collection::vec((0usize..80, 0usize..80, 0u8..9), 0..6)) {
-            let langs = [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Other];
+        fn mixed_spans_never_panic(s in "\\PC{0,60}", cuts in proptest::collection::vec((0usize..80, 0usize..80, 0u8..10), 0..6)) {
+            let langs = [ProofLang::En, ProofLang::Pl, ProofLang::Pt, ProofLang::It, ProofLang::Tr, ProofLang::Ru, ProofLang::Cs, ProofLang::Id, ProofLang::Th, ProofLang::Other];
             let spans: Vec<(Range<usize>, ProofLang)> = cuts.iter().map(|&(a, b, l)| (a.min(b)..a.max(b), langs[l as usize % langs.len()])).collect();
             for i in check_text(&s, &spans) {
                 proptest::prop_assert!(i.start <= i.end && i.end <= s.len());

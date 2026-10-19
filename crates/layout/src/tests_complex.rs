@@ -130,6 +130,12 @@ fn cluster_faces(text: &str, font: Option<&str>) -> Vec<(usize, wordcraft_fonts:
     pl.clusters.iter().map(|c| (c.start, pl.styles[c.style as usize].face)).collect()
 }
 
+/// The face of every cluster of body paragraph `i`, as laid out (`cluster_faces` for a new doc).
+fn cluster_faces_from(l: &DocLayout, i: u32) -> Vec<(usize, wordcraft_fonts::FaceRef)> {
+    let pl = para_layout(l, i);
+    pl.clusters.iter().map(|c| (c.start, pl.styles[c.style as usize].face)).collect()
+}
+
 #[test]
 fn a_missing_thai_font_draws_the_whole_run_in_one_thai_face() {
     if !thai_font_installed() {
@@ -153,26 +159,148 @@ fn a_missing_thai_font_draws_the_whole_run_in_one_thai_face() {
 }
 
 #[test]
-fn a_thai_substitute_without_latin_hands_the_run_to_one_face_covering_it() {
+fn a_run_containing_thai_resolves_once_for_the_whole_thai_portion() {
     if !thai_font_installed() {
         eprintln!("skipped: no Thai font installed");
         return;
     }
-    // When the substitute lacks the run's Thai letters (no listed Thai font is installed, so the
-    // Latin fallback family stands in) or its Latin ones, the run moves to one face covering all.
+    // An installed family that lacks Thai keeps the Latin text in the same family; the Thai
+    // letters, marks, digits and baht sign move to one face, not one character at a time.
+    let faces = cluster_faces(THAI_RUN, Some("Source Sans 3"));
     let latin = wordcraft_fonts::word::resolve("Source Sans 3", false, false).face;
-    let face = crate::para::thai_run_face("TH Sarabun New", true, latin, THAI_RUN, false, false).expect("one face covers the run");
-    assert_ne!(face.id(), latin.id());
-    for c in THAI_RUN.chars().filter(|c| !c.is_whitespace()) {
-        assert!(face.covers(c), "{} covers {c}", face.family);
+    let is_thai_at = |at: usize| THAI_RUN.get(at..).and_then(|t| t.chars().next()).is_some_and(wordcraft_fonts::thai::is_thai);
+    let thai: Vec<&(usize, wordcraft_fonts::FaceRef)> = faces.iter().filter(|(at, _)| is_thai_at(*at)).collect();
+    let first = thai.first().map(|(_, f)| *f).expect("Thai clusters");
+    assert!(first.covers('\u{0E19}') && first.covers('\u{0E3F}'), "{} draws Thai", first.family);
+    assert!(thai.iter().all(|(_, f)| f.id() == first.id()), "one Thai face: {:?}", thai.iter().map(|(_, f)| f.family.as_str()).collect::<Vec<_>>());
+    assert!(faces.iter().filter(|(at, _)| !is_thai_at(*at)).all(|(_, f)| f.id() == latin.id()), "Latin letters and digits stay in Source Sans 3");
+    assert!(faces.iter().any(|(at, _)| is_thai_at(*at)));
+    // A face only for the Thai portion, never for the Latin text beside it.
+}
+
+#[test]
+fn a_missing_thai_family_keeps_one_line_height_for_thai_only_and_mixed_paragraphs() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed");
+        return;
     }
-    // Only for a Thai family that was substituted.
-    assert!(crate::para::thai_run_face("Calibri", true, latin, THAI_RUN, false, false).is_none());
-    assert!(crate::para::thai_run_face("TH Sarabun New", false, latin, THAI_RUN, false, false).is_none());
-    // A substitute that already covers the run keeps it.
-    assert!(crate::para::thai_run_face("TH Sarabun New", true, face, THAI_RUN, false, false).is_none());
-    // Text that is neither Thai nor Latin doesn't make the run move.
-    assert!(crate::para::thai_run_face("TH Sarabun New", true, latin, "abc \u{2603}", false, false).is_none());
+    // Word settles a missing Thai family on one face for the run, so a paragraph that switches
+    // from Thai only to Thai+Latin must not grow: both are drawn in the same substituted face.
+    let db = wordcraft_fonts::FontDb::global();
+    if db.has_family("TH Sarabun New") {
+        eprintln!("skipped: TH Sarabun New is installed");
+        return;
+    }
+    let mut d = Document::from_text("\u{0E44}\u{0E17}\u{0E22}\n\u{0E44}\u{0E17}\u{0E22} ABC 123");
+    for i in 0..2 {
+        let p = d.para_mut(StoryRef::Body, &Path::top(i)).unwrap();
+        p.runs[0].props.font = Some("TH Sarabun New".into());
+        p.runs[0].props.size = Some(16.0);
+    }
+    let l = lay(&d);
+    let heights: Vec<f32> = (0..2).map(|i| para_layout(&l, i).lines[0].height).collect();
+    assert!((heights[0] - heights[1]).abs() < 0.01, "Thai-only and mixed paragraphs keep one line height: {heights:?}");
+    let faces: Vec<_> = (0..2).flat_map(|i| cluster_faces_from(&l, i)).collect();
+    assert!(faces.iter().all(|(_, f)| f.id() == faces[0].1.id()), "one substituted face for both paragraphs");
+}
+
+#[test]
+fn a_theme_thai_typeface_becomes_the_requested_thai_family() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed");
+        return;
+    }
+    // A `w:cstheme` run arrives with the theme's Thai typeface kept apart from the theme's
+    // generic complex-script font (and the theme slot kept for the save). Layout must draw the
+    // Thai portion in the Thai typeface, not the generic complex-script or Latin one.
+    use wordcraft_fonts::thai::{Role, current_platform, first_installed};
+    let db = wordcraft_fonts::FontDb::global();
+    let Some(theme_family) = first_installed(Role::Sans, current_platform(), db) else {
+        eprintln!("skipped: no Thai face from the ordered policy");
+        return;
+    };
+    let text = "\u{0E44}\u{0E17}\u{0E22} ABC 123";
+    let mut d = Document::from_text(text);
+    let p = d.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    p.runs[0].props.font = Some("Source Sans 3".into());
+    p.runs[0].props.font_cs = Some("No Such Generic CS Font 18".into());
+    p.runs[0].props.font_cs_thai = Some(theme_family.into());
+    p.runs[0].props.font_cs_theme = Some("minorBidi".into());
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    let face_at = |start: usize| pl.clusters.iter().find(|c| c.start == start).map(|c| pl.styles[c.style as usize].face);
+    assert!(face_at(0).is_some_and(|f| f.family == theme_family), "Thai uses the theme's Thai typeface");
+    assert!(face_at(10).is_some_and(|f| f.family == "Source Sans 3"), "Latin keeps its own family");
+}
+
+#[test]
+fn a_thai_capable_latin_family_that_is_missing_keeps_latin_and_draws_thai_in_one_face() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed");
+        return;
+    }
+    // Tahoma is a Thai-capable Latin design. When it is missing, Word keeps its Latin substitute
+    // (Carlito, the metric-compatible Calibri face) and draws the whole Thai portion in one Thai
+    // face, without shredding the run per character.
+    let db = wordcraft_fonts::FontDb::global();
+    if db.has_family("Tahoma") {
+        eprintln!("skipped: Tahoma is installed");
+        return;
+    }
+    let faces = cluster_faces(THAI_RUN, Some("Tahoma"));
+    let latin = wordcraft_fonts::word::resolve("Tahoma", false, false).face;
+    let is_thai_at = |at: usize| THAI_RUN.get(at..).and_then(|t| t.chars().next()).is_some_and(wordcraft_fonts::thai::is_thai);
+    let thai_faces: Vec<wordcraft_fonts::FaceRef> = faces.iter().filter(|(at, _)| is_thai_at(*at)).map(|(_, f)| *f).collect();
+    let first = *thai_faces.first().expect("Thai clusters");
+    assert!(first.covers('\u{0E19}'), "{} draws Thai", first.family);
+    assert!(thai_faces.iter().all(|f| f.id() == first.id()), "one Thai face for the whole portion");
+    assert!(faces.iter().filter(|(at, _)| !is_thai_at(*at)).all(|(_, f)| f.id() == latin.id()), "[D] and the ASCII digits stay in {}", latin.family);
+    // The Thai face is a face from the shared policy, not the Latin substitute.
+    assert_ne!(first.id(), latin.id());
+}
+
+#[test]
+fn thai_marks_and_sara_am_never_start_a_new_face() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed");
+        return;
+    }
+    // "น้ำ" holds SARA AM after its consonant, and "ปั้น" a mark after a vowel sign. Neither may
+    // begin a face of its own when the family lacks Thai.
+    let text = "\u{0E19}\u{0E49}\u{0E33}\u{0E1B}\u{0E31}\u{0E49}\u{0E19}";
+    let faces = cluster_faces(text, Some("Source Sans 3"));
+    let thai: Vec<wordcraft_fonts::FaceRef> = faces.iter().map(|(_, f)| *f).collect();
+    assert!(!thai.is_empty());
+    assert!(thai.iter().all(|f| f.id() == thai[0].id()), "marks and SARA AM keep the word's face");
+    assert!(thai[0].covers('\u{0E19}') && thai[0].covers('\u{0E33}'));
+}
+
+#[test]
+fn a_cs_run_supplies_the_complex_script_family_and_its_size() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed");
+        return;
+    }
+    // `w:cs` names the Thai family; it follows the same fallback rules as the Latin slot, and the
+    // Thai portion is drawn at the complex-script size (`w:szCs`).
+    let mut d = Document::from_text(THAI_RUN);
+    let p = d.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    p.runs[0].props.font = Some("No Such Latin Font 1549".into());
+    p.runs[0].props.font_cs = Some("TH Sarabun New".into());
+    p.runs[0].props.size = Some(11.0);
+    p.runs[0].props.size_cs = Some(16.0);
+    p.runs[0].props.cs = Some(true);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    let latin = wordcraft_fonts::word::resolve("No Such Latin Font 1549", false, false).face;
+    let thai = wordcraft_fonts::word::resolve("TH Sarabun New", false, false).face;
+    let at = |start: usize| pl.clusters.iter().find(|c| c.start == start).map(|c| &pl.styles[c.style as usize]);
+    // "[D]" is Latin and keeps the Latin substitute; the Thai letters use the requested cs family.
+    let d_style = at(1).expect("[D]");
+    assert_eq!(d_style.face.id(), latin.id(), "[D] in the Latin substitute");
+    let thai_style = at(4).expect("Thai letters");
+    assert_eq!(thai_style.face.id(), thai.id(), "Thai in the requested complex-script family");
+    assert!(pl.styles.iter().filter(|s| s.face.id() == thai.id()).all(|s| (s.size - 16.0).abs() < 0.25), "the Thai portion uses w:szCs");
 }
 
 #[test]
