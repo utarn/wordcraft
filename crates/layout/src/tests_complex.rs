@@ -459,3 +459,346 @@ fn hostile_million_char_thai_paragraph_lays_out_bounded() {
     }
     let _ = wordcraft_thai::breaks(&text);
 }
+
+// Thai Distributed (#16): Word's line distribution for Thai. These tests sit at the layout
+// output seam: they read line ranges, line ends and per-cluster x positions.
+
+use wordcraft_doc::props::Align;
+
+/// Body paragraph 0 with `align` and a content width of `width` points. The text is kept in one
+/// paragraph, so an embedded `LINE_BREAK` stays a soft break.
+fn aligned(text: &str, align: Align, width: f32) -> Document {
+    let mut d = Document::new();
+    let mut p = wordcraft_doc::Paragraph::with_text(text, wordcraft_doc::CharProps::default());
+    p.props.align = Some(align);
+    p.props.indent_right = Some(468.0 - width);
+    d.body = vec![wordcraft_doc::para_block(p)];
+    d
+}
+
+fn layout_of(d: &Document) -> ParaLayout {
+    let l = lay(d);
+    para_layout(&l, 0).clone()
+}
+
+/// The last cluster of the line's content: trailing spaces, markers and breaks hang past it.
+fn content_last(pl: &ParaLayout, line: &crate::para::Line) -> usize {
+    let mut last = line.c1;
+    while last > line.c0 {
+        let Some(c) = pl.clusters.get(last - 1) else { break };
+        if matches!(
+            c.kind,
+            crate::para::ClKind::Space
+                | crate::para::ClKind::Marker
+                | crate::para::ClKind::Tab
+                | crate::para::ClKind::LineBreak
+                | crate::para::ClKind::PageBreak
+                | crate::para::ClKind::ColumnBreak
+        ) {
+            last -= 1;
+        } else {
+            break;
+        }
+    }
+    last
+}
+
+/// The gap after each content cluster but the last (there is no gap after a line's last unit), in
+/// logical order, for a plain left-to-right line.
+fn gaps(pl: &ParaLayout, line: &crate::para::Line) -> Vec<f32> {
+    let last = content_last(pl, line);
+    (line.c0..last.saturating_sub(1))
+        .filter_map(|k| {
+            let c = pl.clusters.get(k)?;
+            let a = line.xs.get(k - line.c0)?;
+            let b = line.xs.get(k - line.c0 + 1)?;
+            Some(b - a - c.adv)
+        })
+        .collect()
+}
+
+fn near(a: f32, b: f32) -> bool {
+    (a - b).abs() < 0.02
+}
+
+#[test]
+fn thai_distributed_non_last_lines_are_filled_equally() {
+    let text = THAI_SENTENCE.repeat(3);
+    let d = aligned(&text, Align::ThaiDistribute, 180.0);
+    let pl = layout_of(&d);
+    assert!(pl.lines.len() >= 2, "{} lines", pl.lines.len());
+    for line in pl.lines.iter().take(pl.lines.len().saturating_sub(1)) {
+        let g = gaps(&pl, line);
+        assert!(!g.is_empty());
+        let per = g[0];
+        assert!(per > 0.0);
+        for x in &g {
+            assert!(near(*x, per), "equal gaps on a Thai line: {g:?}");
+        }
+        assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right), "the line reaches its right edge");
+    }
+    // The paragraph's last line is laid out exactly as Align Left.
+    let left = layout_of(&aligned(&text, Align::Left, 180.0));
+    assert_eq!(pl.lines.len(), left.lines.len());
+    let (a, b) = (pl.lines.last().unwrap(), left.lines.last().unwrap());
+    assert_eq!((a.c0, a.c1), (b.c0, b.c1));
+    assert_eq!(a.xs.len(), b.xs.len());
+    for (x, y) in a.xs.iter().zip(&b.xs) {
+        assert!(near(*x, *y), "last line positions equal Align Left: {x} vs {y}");
+    }
+}
+
+#[test]
+fn thai_distributed_soft_break_line_distributes_but_the_empty_last_line_does_not() {
+    let text = format!("ภาษาไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let pl = layout_of(&d);
+    assert_eq!(pl.lines.len(), 2, "{:?}", line_ranges(&pl));
+    let first = &pl.lines[0];
+    assert_eq!(first.end, LineEnd::LineBreak);
+    assert!(near(first.xs.last().copied().unwrap_or(0.0), first.right), "the soft-break line reaches the right edge");
+    assert!(gaps(&pl, first).iter().all(|g| *g > 0.0));
+    let last = &pl.lines[1];
+    assert_eq!((last.c0, last.c1), (pl.clusters.len(), pl.clusters.len()));
+    assert_eq!(last.xs.len(), 1);
+    assert!(near(last.xs[0], last.left), "the empty final line stays at the start edge");
+}
+
+#[test]
+fn thai_distributed_units_are_clusters_with_sara_am_separate() {
+    // เกา: three clusters, so a gap before ก and before า.
+    let d = aligned(&format!("เกา{}", wordcraft_doc::para::LINE_BREAK), Align::ThaiDistribute, 200.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    assert_eq!(content_last(&pl, line) - line.c0, 3, "เกา is three layout clusters");
+    let g = gaps(&pl, line);
+    assert_eq!(g.len(), 2, "a gap before ก and before า");
+    assert!(near(g[0], g[1]) && g[0] > 0.0, "{g:?}");
+
+    // สั้น: only สั้ | น, never a gap inside the first cluster.
+    let d = aligned(&format!("สั้น{}", wordcraft_doc::para::LINE_BREAK), Align::ThaiDistribute, 200.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    assert_eq!(content_last(&pl, line) - line.c0, 2, "สั้น separates only as สั้ | น");
+    let g = gaps(&pl, line);
+    assert_eq!(g.len(), 1);
+    assert!(g[0] > 0.0, "{g:?}");
+
+    // นำ: UAX #29 keeps SARA AM in the cluster, but Thai Distributed splits the unit before it.
+    let text = format!("นำ{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 200.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    assert_eq!(content_last(&pl, line) - line.c0, 1, "one layout cluster");
+    assert_eq!(pl.sara_am.len(), 1, "SARA AM is a unit of its own");
+    let cluster = &pl.clusters[line.c0];
+    let slack = line.xs[1] - (line.xs[0] + cluster.adv);
+    assert!(slack > 0.0, "the gap before SARA AM widens the cluster's run: {slack}");
+    // The base glyph stays and the SARA AM glyphs move by the gap.
+    let left = layout_of(&aligned(&text, Align::Left, 200.0));
+    let (a, b) = (&pl.glyphs, &left.glyphs);
+    assert_eq!(a.len(), b.len());
+    let moved = a.iter().zip(b).map(|(x, y)| x.dx - y.dx).fold(0.0f32, f32::max);
+    let still = a.iter().zip(b).map(|(x, y)| x.dx - y.dx).fold(f32::INFINITY, f32::min);
+    assert!(near(moved, slack), "SARA AM's glyphs move by the gap: {moved} vs {slack}");
+    assert!(near(still, 0.0), "the consonant before it stays: {still}");
+}
+
+#[test]
+fn thai_distributed_latin_digit_and_punctuation_runs_are_one_unit() {
+    let text = format!("ABC 123 AB-C{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    let g = gaps(&pl, line);
+    // Gaps appear only after the two spaces: between ABC and 123, and between 123 and AB-C.
+    let space_gaps: Vec<f32> = (line.c0..line.c1)
+        .filter(|k| pl.clusters.get(*k).is_some_and(|c| c.kind == crate::para::ClKind::Space))
+        .filter_map(|k| g.get(k - line.c0).copied())
+        .collect();
+    assert_eq!(space_gaps.len(), 2);
+    assert!(space_gaps.iter().all(|x| *x > 0.0) && near(space_gaps[0], space_gaps[1]), "{space_gaps:?}");
+    let last = content_last(&pl, line);
+    for k in line.c0..last.saturating_sub(1) {
+        if pl.clusters.get(k).is_some_and(|c| c.kind != crate::para::ClKind::Space) {
+            assert!(near(g[k - line.c0], 0.0), "no gap inside Latin, digits or punctuation: {} at {k}", g[k - line.c0]);
+        }
+    }
+}
+
+#[test]
+fn thai_distributed_spaces_absorb_the_gap_and_double_spaces_stay_double() {
+    let text = format!("ภาษา ไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    let g = gaps(&pl, line);
+    let per = g[0];
+    assert!(per > 0.0);
+    let space = (line.c0..line.c1).find(|k| pl.clusters.get(*k).is_some_and(|c| c.kind == crate::para::ClKind::Space)).unwrap();
+    assert!(near(g[space - line.c0], per), "the space absorbs the gap after it");
+    for (i, x) in g.iter().enumerate() {
+        let k = line.c0 + i;
+        let expect = if k + 1 == space { 0.0 } else { per };
+        assert!(near(*x, expect), "one equal gap between every pair of Thai clusters: {g:?}");
+    }
+
+    let text = format!("ภาษา  ไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    let g = gaps(&pl, line);
+    let spaces: Vec<usize> = (line.c0..line.c1).filter(|k| pl.clusters.get(*k).is_some_and(|c| c.kind == crate::para::ClKind::Space)).collect();
+    assert_eq!(spaces.len(), 2);
+    let first = line.xs[spaces[0] - line.c0];
+    let second = line.xs[spaces[1] - line.c0];
+    let next = line.xs[spaces[1] - line.c0 + 1];
+    let space_adv = pl.clusters[spaces[0]].adv;
+    assert!(near(second - first, space_adv), "the two spaces keep their advances");
+    assert!(near(g[spaces[0] - line.c0], 0.0), "no gap between two spaces");
+    let per = g[spaces[1] - line.c0];
+    assert!(per > 0.0 && near(next - second - space_adv, per), "one gap after both spaces");
+    assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right));
+}
+
+#[test]
+fn thai_distributed_starts_after_the_last_tab() {
+    let text = format!("AB\tCD EF{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let left = layout_of(&aligned(&text, Align::Left, 300.0));
+    let pl = layout_of(&d);
+    let (line, plain) = (&pl.lines[0], &left.lines[0]);
+    let tab = (line.c0..line.c1).find(|k| pl.clusters.get(*k).is_some_and(|c| c.kind == crate::para::ClKind::Tab)).expect("the line has a tab");
+    for k in line.c0..=tab {
+        assert!(near(line.xs[k - line.c0], plain.xs[k - plain.c0]), "tab stops and earlier content do not move at {k}");
+    }
+    assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right), "content after the tab fills the right edge");
+    assert!(gaps(&pl, line)[tab - line.c0..].iter().any(|g| *g > 0.0));
+}
+
+#[test]
+fn thai_distributed_keeps_indents_list_labels_and_the_left_edge() {
+    let text = format!("ภาษาไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let mut d = aligned(&text, Align::ThaiDistribute, 300.0);
+    let id = d.numbering.add_list(wordcraft_doc::ListKind::Numbered);
+    d.format_paragraphs(&Pos::body(0, 0), &Pos::body(0, 0), &|p| {
+        p.numbering = Some(wordcraft_doc::props::NumRef { num: id, level: 0 });
+        p.indent_left = Some(30.0);
+        p.indent_first = Some(-12.0);
+    })
+    .unwrap();
+    let mut plain = aligned(&text, Align::Left, 300.0);
+    let id = plain.numbering.add_list(wordcraft_doc::ListKind::Numbered);
+    plain
+        .format_paragraphs(&Pos::body(0, 0), &Pos::body(0, 0), &|p| {
+            p.numbering = Some(wordcraft_doc::props::NumRef { num: id, level: 0 });
+            p.indent_left = Some(30.0);
+            p.indent_first = Some(-12.0);
+        })
+        .unwrap();
+    let pl = layout_of(&d);
+    let left = layout_of(&plain);
+    let (line, base) = (&pl.lines[0], &left.lines[0]);
+    assert!(near(line.left, base.left), "the left edge stays put");
+    assert!(near(line.xs[0], base.xs[0]), "the first cluster stays at the indent");
+    let lab = pl.label.as_ref().expect("a list label");
+    let base_lab = left.label.as_ref().expect("a list label");
+    assert!(near(lab.x, base_lab.x), "the label stays put");
+    assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right), "the right edge is filled");
+}
+
+#[test]
+fn thai_distributed_fills_the_narrowed_span_beside_a_float() {
+    let mut d = aligned(&format!("ภาษาไทย{}", wordcraft_doc::para::LINE_BREAK), Align::ThaiDistribute, 400.0);
+    let float = wordcraft_doc::para::Float {
+        wrap: wordcraft_doc::para::Wrap::Square,
+        h_rel: wordcraft_doc::para::Anchor::Column,
+        v_rel: wordcraft_doc::para::Anchor::Paragraph,
+        x: 252.0,
+        y: 0.0,
+        dist: 9.0,
+        ..Default::default()
+    };
+    let shape = InlineObject::Shape {
+        kind: wordcraft_doc::para::ShapeKind::Rectangle,
+        w: 120.0,
+        h: 100.0,
+        fill: None,
+        stroke: None,
+        stroke_width: 1.0,
+        float,
+        story: None,
+        freeform: None,
+        effects: Default::default(),
+        extra: Default::default(),
+    };
+    d.insert_object(&Pos::body(0, 0), shape, &Default::default()).unwrap();
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    let line = pl.lines.iter().find(|line| line.c1 > line.c0).expect("a text line");
+    assert!(line.right < 400.0, "the float narrows the line: {}", line.right);
+    assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right), "the line fills the narrowed span");
+    assert!(gaps(pl, line).iter().any(|g| *g > 0.0));
+}
+
+#[test]
+fn thai_distributed_one_unit_empty_and_overflowing_lines_do_not_change() {
+    // One unit: no gap and never centred.
+    let text = format!("ก{}", wordcraft_doc::para::LINE_BREAK);
+    let pl = layout_of(&aligned(&text, Align::ThaiDistribute, 200.0));
+    let left = layout_of(&aligned(&text, Align::Left, 200.0));
+    assert_eq!(pl.lines[0].xs, left.lines[0].xs);
+    // Empty paragraph.
+    let d = aligned("", Align::ThaiDistribute, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.iter().flat_map(|line| &line.xs).all(|x| x.is_finite()));
+    // An unbreakable token wider than the line: negative slack distributes nothing.
+    let text = format!("Anextraordinarilylongwordwithoutspaces{}{}", "x".repeat(80), wordcraft_doc::para::LINE_BREAK);
+    let pl = layout_of(&aligned(&text, Align::ThaiDistribute, 120.0));
+    let left = layout_of(&aligned(&text, Align::Left, 120.0));
+    assert_eq!(pl.lines[0].xs, left.lines[0].xs);
+    assert!(pl.lines.iter().flat_map(|line| &line.xs).all(|x| x.is_finite()));
+}
+
+#[test]
+fn generic_distributed_keeps_its_behaviour() {
+    // Generic Distributed distributes the last line too, unlike Thai Distributed.
+    let text = "AB CD EF";
+    let dist = layout_of(&aligned(text, Align::Distribute, 300.0));
+    let left = layout_of(&aligned(text, Align::Left, 300.0));
+    let line = &dist.lines[0];
+    assert_eq!(line.end, LineEnd::Para);
+    assert!(line.xs.last().copied().unwrap_or(0.0) > left.lines[0].xs.last().copied().unwrap_or(0.0) + 1.0);
+    assert!(near(line.xs.last().copied().unwrap_or(0.0), line.right));
+    // Thai Distributed leaves that last line at the start edge.
+    let thai = layout_of(&aligned(text, Align::ThaiDistribute, 300.0));
+    assert_eq!(thai.lines[0].xs, left.lines[0].xs);
+}
+
+#[test]
+fn thai_distributed_gaps_survive_bidi_reordering() {
+    // Thai in a left-to-right paragraph with an embedded right-to-left run.
+    let text = format!("ภาษา עברית ไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let d = aligned(&text, Align::ThaiDistribute, 320.0);
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    assert!(!line.vis.is_empty(), "the line is bidirectional");
+    assert!(line.vis.iter().all(|v| v.x.is_finite() && v.w.is_finite() && v.w >= 0.0));
+    let right = line.vis.iter().map(|v| v.x + v.w).fold(f32::MIN, f32::max);
+    assert!(near(right, line.right), "the gaps still reach the line's end: {right} vs {}", line.right);
+    // A right-to-left paragraph with Thai text.
+    let mut d = aligned(&format!("ภาษาไทย{}", wordcraft_doc::para::LINE_BREAK), Align::ThaiDistribute, 300.0);
+    d.format_paragraphs(&Pos::body(0, 0), &Pos::body(0, 0), &|p| p.bidi = Some(true)).unwrap();
+    let pl = layout_of(&d);
+    let line = &pl.lines[0];
+    assert!(line.rtl);
+    assert!(line.vis.iter().all(|v| v.x.is_finite() && v.w.is_finite() && v.w >= 0.0));
+    let mut boxes: Vec<(f32, f32)> = line.vis.iter().filter(|v| v.w > 0.0).map(|v| (v.x, v.x + v.w)).collect();
+    boxes.sort_by(|a, b| a.0.total_cmp(&b.0));
+    for pair in boxes.windows(2) {
+        assert!(pair[1].0 >= pair[0].1 - 0.02, "no overlap after reordering: {boxes:?}");
+    }
+    assert!(near(boxes.first().map_or(0.0, |b| b.0), line.left), "the line still starts at its edge");
+    assert!(near(boxes.last().map_or(0.0, |b| b.1), line.right), "and ends at the other");
+}

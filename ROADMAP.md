@@ -137,6 +137,7 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 - 2026-10-15: Find opens Navigation on Results; editing the query restores Results after manual Headings/Pages navigation. Typed and selected-text searches retain document contents (#2096).
 
 | Date | What landed |
+| 2026-10-19 | Thai Distributed lays out lines as Word 365 does (#16): equal gaps between distribution units on every line but the paragraph's last, Thai text per layout cluster with SARA AM as a unit of its own, Latin/digit/punctuation runs and inline objects kept whole, spaces absorbing the gap, distribution only after the last tab, and the right edge (or narrowed float span) filled while indents, list labels and the left edge stay. One-unit, empty, zero-slack, overflowing and display-equation lines are unchanged, as is generic Distributed. |
 | 2026-10-18 | Thai text without spaces wraps at dictionary word boundaries, as in Word: the new layer-1 `wordcraft-thai` crate compiles the Unicode-licensed ICU Thai word list to an embedded FST (no filesystem, so the web build works too) and exposes word segments and guarded break opportunities. Layout adds them to UAX #14, so a line never ends on a leading vowel, never starts on a combining mark, and paiyannoi/maiyamok stay attached; hidden text and tracked deletions do not shift breaks, and "Allow Latin text to wrap in the middle of a word" no longer breaks Thai per character (#14). |
 | 2026-10-18 | Thai fonts (#15): one ordered, per-platform substitution policy now drives both Word font substitution and script fallback. General text tries TH Sarabun New, then TH SarabunPSK, then the platform's faces; serif requests use serif-only lists (Browallia is serif) and never a loopless sans. Tahoma, Microsoft Sans Serif and Arial Unicode MS are recognised as Thai-capable Latin families, and a face with GSUB, GPOS/GDEF or AAT `morx` counts as shaping-capable, so Apple's AAT-only Thai faces are not demoted. Missing Thai faces degrade to the existing coverage search. |
 | 2026-10-16 | The Spike, as in Word: Ctrl+F3 (⌘F3 on macOS) cuts the selection and adds it to the end of the Spike, each piece followed by a paragraph mark; Ctrl+Shift+F3 (⌘⇧F3) inserts everything collected, in order and with its formatting, and empties the Spike. The clipboard is left alone; each is one undo step. The Spike is the AutoText entry "Spike", so Insert › Quick Parts inserts it without emptying it. It lasts for the session (Word keeps it in Normal.dotm) |
@@ -449,6 +450,7 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-19 | trivial | Progress log: Word-compatible Thai Distributed line distribution (#16) |
 | 2026-10-18 | trivial | Progress log: one ordered per-platform Thai font substitution policy (#15) |
 | 2026-10-16 | trivial | Progress log: the Spike |
 | 2026-10-16 | trivial | Progress log: `w:eastAsianLayout` kept on save |
