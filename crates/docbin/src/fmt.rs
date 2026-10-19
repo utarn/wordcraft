@@ -245,6 +245,8 @@ pub(crate) fn apply_para(p: &mut ParaProps, prl: &Prl) {
     match prl.op {
         sprm::P_CHG_TABS | sprm::P_CHG_TABS_PAPX => change_tabs(p, prl),
         P_JC | P_JC80 => {
+            // MS-DOC has no Thai-distributed code: code 4 is plain distributed. Thai distributed
+            // is lossy here (it reads as Distributed; there is no .doc writer).
             p.align = match prl.operand.first().copied().unwrap_or(0) {
                 1 => Some(Align::Center),
                 2 => Some(Align::Right),
@@ -462,6 +464,22 @@ fn apply_chain_para(para: &mut ParaProps, grpprl: &[u8]) {
     for prl in sprm::iter(grpprl) {
         if prl.sgc() == 1 {
             apply_para(para, &prl);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// [MS-DOC] paragraph justification has no Thai-distributed code: code 4 is Distributed,
+    /// and an unknown code reads as Left.
+    #[test]
+    fn legacy_justification_codes() {
+        for (code, want) in [(0, Align::Left), (1, Align::Center), (2, Align::Right), (3, Align::Justify), (4, Align::Distribute), (9, Align::Left)] {
+            let mut p = ParaProps::default();
+            apply_para(&mut p, &Prl { op: P_JC, operand: &[code] });
+            assert_eq!(p.align, Some(want), "code {code}");
         }
     }
 }

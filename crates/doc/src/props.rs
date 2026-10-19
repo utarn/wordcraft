@@ -543,17 +543,33 @@ pub enum Align {
     Right,
     Justify,
     Distribute,
+    /// Thai distributed: word spacing distributed as Thai requires (`w:jc="thaiDistribute"`).
+    /// A value of its own, distinct from [`Align::Distribute`]; direction-independent.
+    ThaiDistribute,
 }
 
 impl Align {
     /// Alignment is logical (`Left` is the start edge, ISO 29500 `start`): the alignment as seen
     /// on the page, or the logical one for a visual choice, in a paragraph that reads right to
-    /// left when `rtl` (Left and Right swap; the swap is its own inverse).
+    /// left when `rtl` (Left and Right swap; the swap is its own inverse). Distributed and Thai
+    /// distributed are direction-independent.
     pub fn visual(self, rtl: bool) -> Align {
         match self {
             Align::Left if rtl => Align::Right,
             Align::Right if rtl => Align::Left,
             a => a,
+        }
+    }
+
+    /// The value's name in JSON and the UI (`serde`'s camelCase form).
+    pub fn name(self) -> &'static str {
+        match self {
+            Align::Left => "left",
+            Align::Center => "center",
+            Align::Right => "right",
+            Align::Justify => "justify",
+            Align::Distribute => "distribute",
+            Align::ThaiDistribute => "thaiDistribute",
         }
     }
 }

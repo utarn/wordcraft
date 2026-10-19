@@ -686,6 +686,7 @@ fn describe(prop: &str, v: &Value) -> String {
             "right" => "Right",
             "justify" => "Justified",
             "distribute" => "Distributed",
+            "thaiDistribute" => "Thai Distributed",
             _ => "Left",
         })
         .to_string(),
@@ -736,6 +737,15 @@ fn camel_words(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::comment_stamp;
+
+    /// The state surface names Thai distributed apart from distributed.
+    #[test]
+    fn thai_distributed_is_named_in_the_state_surface() {
+        use super::describe;
+        assert_eq!(describe("align", &serde_json::json!("thaiDistribute")), "Alignment: Thai Distributed");
+        assert_eq!(describe("align", &serde_json::json!("distribute")), "Alignment: Distributed");
+        assert_eq!(describe("align", &serde_json::json!("left")), "Alignment: Left");
+    }
 
     #[test]
     fn comment_stamp_keeps_date_and_time() {
