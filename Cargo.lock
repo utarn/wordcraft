@@ -1482,6 +1482,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "fst"
+version = "0.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ab85b9b05e3978cc9a9cf8fea7f01b494e1a09ed3037e16ba39edc7a29eb61a"
+
+[[package]]
 name = "futures-core"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2883,7 +2889,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5313,6 +5319,7 @@ dependencies = [
  "wordcraft-fonts",
  "wordcraft-geom",
  "wordcraft-proof",
+ "wordcraft-thai",
 ]
 
 [[package]]
@@ -5376,6 +5383,13 @@ dependencies = [
  "wordcraft-geom",
  "wordcraft-layout",
  "wordcraft-metafile",
+]
+
+[[package]]
+name = "wordcraft-thai"
+version = "0.8.0"
+dependencies = [
+ "fst",
 ]
 
 [[package]]

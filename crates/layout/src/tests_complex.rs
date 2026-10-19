@@ -266,3 +266,196 @@ fn a_missing_roman_thai_font_is_not_drawn_in_cambria() {
     assert_ne!(face(true).id(), cambria.id());
     assert_eq!(face(true).id(), face(false).id());
 }
+
+/// Thai text without spaces: "Thai is a beautiful language, with pleasing tones."
+const THAI_SENTENCE: &str = "ภาษาไทยเป็นภาษาที่สวยงามและมีเสียงวรรณยุกต์ที่ไพเราะ";
+
+/// Narrow body paragraph 0 so Thai wraps many times.
+fn narrow(d: &mut Document, by: f32) {
+    d.format_paragraphs(&Pos::body(0, 0), &Pos::body(0, 0), &|p| p.indent_right = Some(468.0 - by)).unwrap();
+}
+
+fn line_ranges(pl: &ParaLayout) -> Vec<(usize, usize)> {
+    pl.lines.iter().map(|l| (l.c0, l.c1)).collect()
+}
+
+/// The visible text of each line: the paragraph text under the line with hidden and deleted
+/// ranges ([`ParaLayout::left_out`]) removed.
+fn line_texts(pl: &ParaLayout, text: &str) -> Vec<String> {
+    pl.lines
+        .iter()
+        .map(|line| {
+            let mut out = String::new();
+            for (i, c) in text.get(line.start..line.stop).unwrap_or("").char_indices() {
+                let at = line.start.saturating_add(i);
+                if !pl.left_out.iter().any(|r| r.start <= at && at < r.end) {
+                    out.push(c);
+                }
+            }
+            out
+        })
+        .collect()
+}
+
+#[test]
+fn thai_without_spaces_wraps_at_dictionary_word_boundaries() {
+    let text = THAI_SENTENCE.repeat(8);
+    let mut d = Document::from_text(&text);
+    narrow(&mut d, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 4, "a long Thai paragraph wraps: {} lines", pl.lines.len());
+    let breaks = wordcraft_thai::breaks(&text);
+    for line in pl.lines.iter().skip(1) {
+        assert!(breaks.contains(&line.start), "line starts at a dictionary word boundary: {} in {:?}", line.start, text.get(..line.start));
+    }
+    for line in pl.lines.iter().take(pl.lines.len().saturating_sub(1)) {
+        assert!(breaks.contains(&line.stop), "line ends at a dictionary word boundary: {} in {:?}", line.stop, text.get(..line.stop));
+    }
+    // Pinned: "ภาษา" | "ไทย" | "เป็น" | "ภาษา" | "ที่" …, never per character. Byte offsets.
+    assert_eq!(wordcraft_thai::breaks(THAI_SENTENCE), vec![12, 21, 33, 45, 54, 72, 81, 87, 102, 129, 138]);
+    assert!(!breaks.contains(&3) && !breaks.contains(&6));
+}
+
+#[test]
+fn thai_break_guards_hold_in_layout() {
+    // Unknown syllables make the dictionary leave boundaries after leading vowels and before
+    // marks; the guards must remove them.
+    let text = "กกเกกก\u{0E31}กก\u{0E48}กกฯกกๆก".repeat(30);
+    let mut d = Document::from_text(&text);
+    narrow(&mut d, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 1, "{}", pl.lines.len());
+    for line in pl.lines.iter().skip(1) {
+        let next = text.get(line.start..).and_then(|t| t.chars().next()).unwrap_or(' ');
+        let u = u32::from(next);
+        assert!(!matches!(u, 0x0E31 | 0x0E34..=0x0E3A | 0x0E47..=0x0E4E), "no line starts on a combining mark: {line:?}");
+        assert!(!matches!(next, '\u{0E2F}' | '\u{0E46}'), "paiyannoi and maiyamok stay attached: {line:?}");
+    }
+    for line in pl.lines.iter().take(pl.lines.len().saturating_sub(1)) {
+        let prev = text.get(..line.stop).and_then(|t| t.chars().next_back()).unwrap_or(' ');
+        assert!(!matches!(u32::from(prev), 0x0E40..=0x0E44), "no line ends on a leading vowel: {line:?}");
+    }
+}
+
+#[test]
+fn thai_mixed_with_latin_digits_and_spaces_keeps_their_breaks() {
+    let text = "ไทย ภาษา ABC 123 ภาษาไทย xyz".repeat(30);
+    let mut d = Document::from_text(&text);
+    narrow(&mut d, 150.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    let breaks = wordcraft_thai::breaks(&text);
+    for line in pl.lines.iter().skip(1) {
+        let before = text.get(..line.start).unwrap_or("");
+        assert!(breaks.contains(&line.start) || before.ends_with(' '), "line starts at a Thai word boundary or after a space: {}", line.start);
+    }
+    // Latin and digit tokens stay whole: the dictionary never splits them.
+    for token in ["ABC", "123", "xyz"] {
+        let mut from = 0;
+        while let Some(k) = text.get(from..).and_then(|t| t.find(token)) {
+            let start = from + k;
+            let end = start + token.len();
+            for line in &pl.lines {
+                assert!(!(line.start > start && line.start < end), "{token} split at {}", line.start);
+            }
+            from = end;
+        }
+    }
+}
+
+#[test]
+fn hidden_thai_does_not_shift_break_offsets() {
+    let visible = THAI_SENTENCE.repeat(6);
+    let mut plain = Document::from_text(&visible);
+    narrow(&mut plain, 200.0);
+    let plain_l = lay(&plain);
+    let plain_pl = para_layout(&plain_l, 0);
+
+    let mut d = Document::from_text("");
+    let hidden = wordcraft_doc::CharProps { hidden: Some(true), ..Default::default() };
+    for c in visible.chars() {
+        let n = d.para(StoryRef::Body, &Path::top(0)).unwrap().len();
+        d.insert_text(&Pos::body(0, n), &c.to_string(), &wordcraft_doc::CharProps::default()).unwrap();
+        d.insert_text(&Pos::body(0, n + c.len_utf8()), "ก", &hidden).unwrap();
+    }
+    narrow(&mut d, 200.0);
+    let l = layout(&d, &mut LayoutCache::new(), &LayoutOptions::default());
+    let pl = para_layout(&l, 0);
+    assert_eq!(line_texts(pl, &d.para(StoryRef::Body, &Path::top(0)).unwrap().text), line_texts(plain_pl, &visible));
+}
+
+#[test]
+fn tracked_deleted_thai_does_not_shift_break_offsets() {
+    let visible = THAI_SENTENCE.repeat(6);
+    let mut plain = Document::from_text(&visible);
+    narrow(&mut plain, 200.0);
+    let plain_l = lay(&plain);
+    let plain_pl = para_layout(&plain_l, 0);
+
+    let mut d = Document::from_text("");
+    let mut ranges = Vec::new();
+    for c in visible.chars() {
+        let n = d.para(StoryRef::Body, &Path::top(0)).unwrap().len();
+        d.insert_text(&Pos::body(0, n), &c.to_string(), &wordcraft_doc::CharProps::default()).unwrap();
+        let at = n + c.len_utf8();
+        d.insert_text(&Pos::body(0, at), "ก", &wordcraft_doc::CharProps::default()).unwrap();
+        ranges.push((at, at + "ก".len()));
+    }
+    for (a, b) in ranges {
+        d.format_range(&Pos::body(0, a), &Pos::body(0, b), &|c| c.del = Some(0)).unwrap();
+    }
+    narrow(&mut d, 200.0);
+    let l = layout(&d, &mut LayoutCache::new(), &LayoutOptions { hide_deleted: true, ..Default::default() });
+    let pl = para_layout(&l, 0);
+    assert_eq!(line_texts(pl, &d.para(StoryRef::Body, &Path::top(0)).unwrap().text), line_texts(plain_pl, &visible));
+}
+
+#[test]
+fn word_wrap_off_leaves_thai_on_dictionary_breaks_and_latin_breaking_anywhere() {
+    // Thai is never broken per character, even with "Allow Latin text to wrap in the middle of a
+    // word" off (#14): the dictionary's breaks are the only ones.
+    let text = THAI_SENTENCE.repeat(6);
+    let mut d = Document::from_text(&text);
+    let p = d.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    p.props.word_wrap = Some(false);
+    narrow(&mut d, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 1);
+    let breaks = wordcraft_thai::breaks(&text);
+    let flagged: Vec<usize> = pl.clusters.iter().filter(|c| c.break_after).map(|c| c.end).collect();
+    assert_eq!(flagged, breaks, "Thai breaks only at dictionary words");
+    for line in pl.lines.iter().skip(1) {
+        assert!(breaks.contains(&line.start), "line starts at a word boundary: {}", line.start);
+    }
+
+    // Latin still breaks anywhere, as before.
+    let latin = "Anextraordinarilylongwordwithoutspaceswrapsmidword";
+    let mut d = Document::from_text(latin);
+    let p = d.para_mut(StoryRef::Body, &Path::top(0)).unwrap();
+    p.props.word_wrap = Some(false);
+    narrow(&mut d, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 1);
+    assert!(pl.lines.iter().skip(1).any(|line| !latin.get(..line.start).unwrap_or("").ends_with(' ')), "{:?}", line_ranges(pl));
+}
+
+#[test]
+fn hostile_million_char_thai_paragraph_lays_out_bounded() {
+    let text = THAI_SENTENCE.repeat(20_000);
+    assert!(text.chars().count() >= 1_000_000);
+    let mut d = Document::from_text(&text);
+    // One tall page, so the test measures line breaking, not thousands of page objects.
+    d.last_section.page_h = 20_000.0;
+    narrow(&mut d, 0.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 100, "{}", pl.lines.len());
+    for line in pl.lines.iter().skip(1) {
+        assert!(line.start > 0 && line.start <= text.len());
+    }
+    let _ = wordcraft_thai::breaks(&text);
+}

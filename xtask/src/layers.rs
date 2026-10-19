@@ -39,6 +39,7 @@ pub const TABLE: &[(&str, Class)] = &[
     ("fonts", Class::Layer(1)),
     ("metafile", Class::Layer(1)),
     ("proof", Class::Layer(1)),
+    ("thai", Class::Layer(1)),
     ("layout", Class::Layer(2)),
     ("docx", Class::Layer(2)),
     ("docbin", Class::Layer(2)),
@@ -61,7 +62,7 @@ pub const TABLE: &[(&str, Class)] = &[
 /// The L0 foundation is a small chain: `raster` builds on `color` and
 /// `geom`, which the §3 diagram draws on one line. The GPU backend (`gpu`)
 /// reuses the CPU reference (`compose`) for LUTs and parity tests.
-pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["doc", "fonts"]];
+pub const INTRA_LAYER_ORDER: &[&[&str]] = &[&["doc", "fonts"], &["thai", "proof"]];
 
 fn intra_layer_allowed(from: &str, to: &str) -> bool {
     let (from, to) = (short_name(from), short_name(to));
@@ -262,6 +263,16 @@ mod tests {
     fn sideways_dependency_flagged() {
         let v = check(&[c("wordcraft-layout", &[("wordcraft-docx", Normal, true)])]);
         assert!(matches!(v[..], [Violation::Upward { from: 2, to: 2, .. }]));
+    }
+
+    #[test]
+    fn thai_is_l1_and_proof_may_use_it() {
+        assert_eq!(classify("wordcraft-thai"), Some(Class::Layer(1)));
+        assert!(check(&[c("wordcraft-proof", &[("wordcraft-thai", Normal, true)])]).is_empty());
+        // Layout (L2) may use it; it may not use proof or layout.
+        assert!(check(&[c("wordcraft-layout", &[("wordcraft-thai", Normal, true)])]).is_empty());
+        let v = check(&[c("wordcraft-thai", &[("wordcraft-proof", Normal, true)])]);
+        assert!(matches!(v[..], [Violation::Upward { from: 1, to: 1, .. }]));
     }
 
     #[test]

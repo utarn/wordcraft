@@ -56,9 +56,10 @@ pub fn apply(text: &str, opps: &mut Vec<usize>, kinsoku: bool, word_wrap: bool) 
         }
     }
     if !word_wrap {
-        // Between any two letters or digits that are not East Asian (whole graphemes, so accents
-        // stay with their letters).
-        let latin = |g: &str| g.chars().next().is_some_and(|c| c.is_alphanumeric() && !is_east_asian(c));
+        // Between any two letters or digits that are Latin (whole graphemes, so accents stay
+        // with their letters). Thai and other complex scripts are never broken per character:
+        // their own rules (a dictionary, syllable boundaries) decide, as Word does.
+        let latin = |g: &str| g.chars().next().is_some_and(|c| c.is_alphanumeric() && !is_east_asian(c) && !is_complex_script(c) && !is_hangul(c));
         let mut prev: Option<&str> = None;
         for (i, g) in text.grapheme_indices(true) {
             if prev.is_some_and(latin) && latin(g) {
@@ -107,6 +108,25 @@ fn is_hangul(c: char) -> bool {
     matches!(c as u32, 0x1100..=0x11FF | 0x3130..=0x318F | 0xA960..=0xA97F | 0xAC00..=0xD7FF | 0xFFA0..=0xFFDC)
 }
 
+/// Scripts written with combining marks, stacked consonants or context-dependent shaping:
+/// never broken per character by the Latin "wrap anywhere" option. Hebrew and Arabic, the Indic
+/// and South-East Asian scripts, Ethiopic, Khmer and Tai Tham are all complex; their line
+/// breaking comes from their own rules.
+fn is_complex_script(c: char) -> bool {
+    matches!(c as u32,
+        0x0590..=0x08FF          // Hebrew, Arabic, Syriac, Thaana, NKo, Samaritan, Mandaic
+        | 0x0900..=0x0DFF        // Devanagari … Sinhala
+        | 0x0E00..=0x0EFF        // Thai, Lao
+        | 0x0F00..=0x0FFF        // Tibetan
+        | 0x1000..=0x109F        // Myanmar
+        | 0x1200..=0x137F        // Ethiopic
+        | 0x1780..=0x17FF        // Khmer
+        | 0x1A20..=0x1AAF        // Tai Tham
+        | 0x1B00..=0x1B7F        // Balinese
+        | 0xA980..=0xA9FF        // Javanese, Myanmar Extended-B
+        | 0xAA60..=0xAA7F) // Myanmar Extended-A
+}
+
 #[cfg(test)]
 mod tests {
     use super::{AsianSide, apply, auto_space};
@@ -127,6 +147,23 @@ mod tests {
         let mut opps: Vec<usize> = unicode_linebreak::linebreaks(text).map(|(i, _)| i).filter(|&i| i < text.len()).collect();
         apply(text, &mut opps, kinsoku, word_wrap);
         opps.iter().map(|&i| text.get(i..).and_then(|t| t.chars().next()).map(String::from).unwrap_or_default()).collect()
+    }
+
+    #[test]
+    fn word_wrap_off_breaks_latin_but_never_complex_scripts() {
+        // "Allow Latin text to wrap in the middle of a word" off: Latin breaks between any two
+        // letters, Thai (and other complex scripts) never do — the dictionary decides (#14).
+        let mut opps = Vec::new();
+        apply("Hello café", &mut opps, true, false);
+        assert_eq!(opps, vec![1, 2, 3, 4, 7, 8, 9]);
+        let mut opps = Vec::new();
+        apply("ภาษาไทยเป็นภาษาที่สวยงาม", &mut opps, true, false);
+        assert!(opps.is_empty(), "{opps:?}");
+        for script in ["မြန်မာစာ", "ខ្មែរ", "हिन्दी", "العربية"] {
+            let mut opps = Vec::new();
+            apply(script, &mut opps, true, false);
+            assert!(opps.is_empty(), "{script}: {opps:?}");
+        }
     }
 
     #[test]
