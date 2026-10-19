@@ -127,6 +127,10 @@ fn is_word_char(c: char) -> bool {
 
 /// Unrestricted break points of one lowercase core (letters and `'` only, no leading/trailing `'`).
 fn core_breaks(core: &[char], lang: ProofLang) -> (Vec<usize>, Source) {
+    // Thai is not hyphenated: no breaks, and never the English Liang patterns (#17).
+    if lang == ProofLang::Th {
+        return (vec![], Source::None);
+    }
     let n = core.len();
     if n < 2 {
         return (vec![], Source::None);

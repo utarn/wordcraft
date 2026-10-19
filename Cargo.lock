@@ -6770,6 +6770,7 @@ dependencies = [
  "miniz_oxide 0.8.9",
  "proptest",
  "unicode-normalization",
+ "wordcraft-thai",
 ]
 
 [[package]]
