@@ -2271,3 +2271,9 @@
 	All Fonts	Усі шрифти
 	Spike	Накопичувач
 	Insert Spike	Вставити з накопичувача
+	Font Diagnostics	Діагностика шрифтів
+	Complex script font:	Шрифт для складних письменностей:
+	Complex script size:	Розмір для складних письменностей:
+	Complex script preview	Перегляд складних письменностей
+	This text is in a script no installed font can draw: it shows as boxes.	Цей текст набрано письменністю, яку не може відобразити жоден встановлений шрифт: він показується квадратами.
+	Document fonts not installed:	Невстановлені шрифти документа:

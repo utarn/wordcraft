@@ -2259,3 +2259,9 @@
 	All Fonts	すべてのフォント
 	Spike	スパイク
 	Insert Spike	スパイクの挿入
+	Font Diagnostics	フォント診断
+	Complex script font:	複合スクリプトのフォント:
+	Complex script size:	複合スクリプトのサイズ:
+	Complex script preview	複合スクリプトのプレビュー
+	This text is in a script no installed font can draw: it shows as boxes.	このテキストは、インストールされているどのフォントでも描画できない文字体系です。四角形で表示されます。
+	Document fonts not installed:	文書で使用されている未インストールのフォント:

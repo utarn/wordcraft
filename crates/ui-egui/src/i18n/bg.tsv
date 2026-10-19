@@ -2647,3 +2647,9 @@
 	All Fonts	Всички шрифтове
 	Spike	Натрупване
 	Insert Spike	Вмъкване на натрупаното
+	Font Diagnostics	Диагностика на шрифтовете
+	Complex script font:	Шрифт за сложни писмености:
+	Complex script size:	Размер за сложни писмености:
+	Complex script preview	Преглед за сложни писмености
+	This text is in a script no installed font can draw: it shows as boxes.	Този текст е на писменост, която никой инсталиран шрифт не може да изобрази: показва се като квадратчета.
+	Document fonts not installed:	Шрифтове на документа, които не са инсталирани:

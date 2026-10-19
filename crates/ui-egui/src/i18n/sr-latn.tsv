@@ -2269,3 +2269,9 @@
 	All Fonts	Svi fontovi
 	Spike	Sakupljač
 	Insert Spike	Umetni iz sakupljača
+	Font Diagnostics	Dijagnostika fontova
+	Complex script font:	Font za složena pisma:
+	Complex script size:	Veličina za složena pisma:
+	Complex script preview	Pregled složenih pisama
+	This text is in a script no installed font can draw: it shows as boxes.	Ovaj tekst je na pismu koje nijedan instalirani font ne može nacrtati: prikazuje se kao kvadratići.
+	Document fonts not installed:	Fontovi dokumenta koji nisu instalirani:

@@ -2650,3 +2650,9 @@ preview	Title	Ukázka
 	All Fonts	Všechna písma
 	Spike	Sběrač
 	Insert Spike	Vložit ze sběrače
+	Font Diagnostics	Diagnostika písem
+	Complex script font:	Písmo pro komplexní skripty:
+	Complex script size:	Velikost pro komplexní skripty:
+	Complex script preview	Náhled komplexních skriptů
+	This text is in a script no installed font can draw: it shows as boxes.	Tento text je v písmu, které žádné nainstalované písmo neumí vykreslit: zobrazí se jako rámečky.
+	Document fonts not installed:	Písma dokumentu, která nejsou nainstalována:

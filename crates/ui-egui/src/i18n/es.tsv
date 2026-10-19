@@ -2625,3 +2625,9 @@ preview	Title	Título
 	All Fonts	Todas las fuentes
 	Spike	Acumulador
 	Insert Spike	Insertar acumulador
+	Font Diagnostics	Diagnóstico de fuentes
+	Complex script font:	Fuente para escrituras complejas:
+	Complex script size:	Tamaño para escrituras complejas:
+	Complex script preview	Vista previa de escrituras complejas
+	This text is in a script no installed font can draw: it shows as boxes.	Este texto está en una escritura que ninguna fuente instalada puede dibujar: se muestra como recuadros.
+	Document fonts not installed:	Fuentes del documento no instaladas:

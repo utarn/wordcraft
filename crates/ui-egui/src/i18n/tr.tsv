@@ -2655,3 +2655,9 @@ preview	Title	Örnek
 	All Fonts	Tüm Yazı Tipleri
 	Spike	Biriktirici
 	Insert Spike	Biriktiriciyi Ekle
+	Font Diagnostics	Yazı tipi tanılama
+	Complex script font:	Karmaşık betik yazı tipi:
+	Complex script size:	Karmaşık betik boyutu:
+	Complex script preview	Karmaşık betik önizlemesi
+	This text is in a script no installed font can draw: it shows as boxes.	Bu metin, yüklü hiçbir yazı tipinin çizemediği bir betikte: kutular olarak görünüyor.
+	Document fonts not installed:	Belgede kullanılan ve yüklü olmayan yazı tipleri:

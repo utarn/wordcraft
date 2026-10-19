@@ -2266,3 +2266,9 @@
 	All Fonts	Toutes les polices
 	Spike	Pique-notes
 	Insert Spike	Insérer le pique-notes
+	Font Diagnostics	Diagnostic des polices
+	Complex script font:	Police pour écritures complexes :
+	Complex script size:	Taille pour écritures complexes :
+	Complex script preview	Aperçu des écritures complexes
+	This text is in a script no installed font can draw: it shows as boxes.	Ce texte est dans une écriture qu'aucune police installée ne peut dessiner : il s'affiche sous forme de carrés.
+	Document fonts not installed:	Polices du document non installées :

@@ -2260,3 +2260,9 @@
 	All Fonts	所有字型
 	Spike	收集區
 	Insert Spike	插入收集區
+	Font Diagnostics	字型診斷
+	Complex script font:	複雜文種字型:
+	Complex script size:	複雜文種大小:
+	Complex script preview	複雜文種預覽
+	This text is in a script no installed font can draw: it shows as boxes.	此文字使用的文種沒有任何已安裝字型能夠繪製：將顯示為方框。
+	Document fonts not installed:	文件使用但未安裝的字型:

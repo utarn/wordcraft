@@ -22,7 +22,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![forbid(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::num::NonZeroU16;
 use std::sync::Arc;
 
@@ -99,20 +99,124 @@ impl Default for PdfOptions {
     }
 }
 
+/// Characters an export would draw as `.notdef` boxes, grouped by the face that would draw them.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PdfReport {
+    pub missing_glyphs: Vec<MissingGlyphs>,
+}
+
+/// One face's characters that no installed face can draw.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct MissingGlyphs {
+    /// The face the page drew the box with (often `.LastResort`).
+    pub family: String,
+    /// The characters, once each, in code point order.
+    pub chars: Vec<char>,
+}
+
+impl PdfReport {
+    pub fn is_empty(&self) -> bool {
+        self.missing_glyphs.is_empty()
+    }
+
+    /// Report each boxed character in the log, so a command-line conversion says what it shipped
+    /// instead of writing boxes silently.
+    pub fn log(&self) {
+        for m in &self.missing_glyphs {
+            let chars: Vec<String> = m.chars.iter().map(|c| format!("U+{:04X}", u32::from(*c))).collect();
+            log::warn!("PDF export: {} has no glyph for {}; the page shows boxes", m.family, chars.join(", "));
+        }
+    }
+}
+
 /// Lay out `doc` and write it as PDF. Without markup the layout is the final text: tracked
 /// deletions are left out, as in Word's "No Markup" view. With `comments` each page carries the
 /// markup area with the comment balloons.
 pub fn export(doc: &Document, opts: &PdfOptions) -> Result<Vec<u8>, PdfError> {
+    let (bytes, report) = export_with_report(doc, opts)?;
+    report.log();
+    Ok(bytes)
+}
+
+/// [`export`], also reporting the characters that would be drawn as boxes (no installed face
+/// covers them), so a caller can warn before shipping them.
+pub fn export_with_report(doc: &Document, opts: &PdfOptions) -> Result<(Vec<u8>, PdfReport), PdfError> {
     write::guard(|| {
         let lo = LayoutOptions { hide_deleted: !opts.include_markup, comment_balloons: opts.comments, ..Default::default() };
         let lay = layout(doc, &mut LayoutCache::new(), &lo);
-        export_layout_inner(doc, &lay, opts)
+        let bytes = export_layout_inner(doc, &lay, opts)?;
+        Ok((bytes, missing_glyphs(doc, &lay, opts)))
     })
 }
 
 /// Write an existing layout of `doc` as PDF.
 pub fn export_layout(doc: &Document, lay: &DocLayout, opts: &PdfOptions) -> Result<Vec<u8>, PdfError> {
-    write::guard(|| export_layout_inner(doc, lay, opts))
+    let (bytes, report) = export_layout_with_report(doc, lay, opts)?;
+    report.log();
+    Ok(bytes)
+}
+
+/// [`export_layout`], also reporting the characters that would be drawn as boxes.
+pub fn export_layout_with_report(doc: &Document, lay: &DocLayout, opts: &PdfOptions) -> Result<(Vec<u8>, PdfReport), PdfError> {
+    write::guard(|| {
+        let bytes = export_layout_inner(doc, lay, opts)?;
+        Ok((bytes, missing_glyphs(doc, lay, opts)))
+    })
+}
+
+/// The characters the export would draw as boxes: glyphs that shaped to `.notdef` (0) for text
+/// that isn't whitespace, grouped by the family the page asked for. Page headers, footers and
+/// inline figures are included; the same display list the writer draws is used.
+pub fn missing_glyphs(doc: &Document, lay: &DocLayout, opts: &PdfOptions) -> PdfReport {
+    let dopts =
+        DisplayOptions { marks: false, dim_header: false, dim_body: false, markup: opts.include_markup, placeholders: false, ..Default::default() };
+    let mut found: BTreeMap<String, BTreeSet<char>> = BTreeMap::new();
+    for page in &lay.pages {
+        for it in page.header.iter().chain(&page.footer).chain(&page.items) {
+            let mut items = vec![it.clone()];
+            // A line clipped to its table cell is drawn together with the cell's other items.
+            if matches!(it, Placed::Lines { .. }) {
+                let clipped = page.header.iter().chain(&page.footer).chain(&page.items).filter(|c| matches!(c, Placed::Cell { clip: true, .. }));
+                items.extend(clipped.cloned());
+            }
+            let one = Page { w: page.w, h: page.h, section: page.section, number: page.number, items, body: page.body, ..Default::default() };
+            for d in page_display(doc, &one, &dopts) {
+                collect_boxed(&d, &mut found);
+            }
+        }
+    }
+    PdfReport { missing_glyphs: found.into_iter().map(|(family, chars)| MissingGlyphs { family, chars: chars.into_iter().collect() }).collect() }
+}
+
+/// Add the `.notdef` glyphs of `d` to `out`: the characters whose text is drawn as a box.
+fn collect_boxed(d: &Draw, out: &mut BTreeMap<String, BTreeSet<char>>) {
+    match d {
+        Draw::Glyphs { face, glyphs, text, ranges, .. } => {
+            let chars = text.chars().count();
+            // A `.LastResort` face exists only to draw a placeholder for characters nothing else
+            // covers, so all of its glyphs are boxes too.
+            let placeholder = face.is_placeholder();
+            for (i, (gid, _, _)) in glyphs.iter().enumerate() {
+                if *gid != 0 && !placeholder {
+                    continue;
+                }
+                let ch = match ranges.get(i) {
+                    Some(r) => text.get(r.clone()).and_then(|s| s.chars().next()),
+                    None if chars == glyphs.len() => text.chars().nth(i),
+                    None => None,
+                };
+                if let Some(ch) = ch.filter(|c| !c.is_whitespace() && !c.is_control() && *c != '\u{00AD}') {
+                    out.entry(face.family.clone()).or_default().insert(ch);
+                }
+            }
+        }
+        Draw::Figure { draws, .. } | Draw::Turned { items: draws, .. } | Draw::Rotated { items: draws, .. } | Draw::Clip { items: draws, .. } => {
+            for d in draws {
+                collect_boxed(d, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn export_layout_inner(doc: &Document, lay: &DocLayout, opts: &PdfOptions) -> Result<Vec<u8>, PdfError> {

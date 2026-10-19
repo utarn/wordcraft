@@ -2698,3 +2698,9 @@ template	Letter	Thư
 	All Fonts	Tất cả phông chữ
 	Spike	Bộ gom
 	Insert Spike	Chèn bộ gom
+	Font Diagnostics	Chẩn đoán phông chữ
+	Complex script font:	Phông chữ cho hệ chữ phức hợp:
+	Complex script size:	Cỡ chữ cho hệ chữ phức hợp:
+	Complex script preview	Xem trước hệ chữ phức hợp
+	This text is in a script no installed font can draw: it shows as boxes.	Văn bản này thuộc hệ chữ mà không phông chữ nào đã cài đặt có thể vẽ: nó hiển thị thành ô vuông.
+	Document fonts not installed:	Phông chữ của tài liệu chưa được cài đặt:

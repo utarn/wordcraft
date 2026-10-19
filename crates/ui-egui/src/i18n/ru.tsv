@@ -2656,3 +2656,9 @@ preview	Title	Пример
 	All Fonts	Все шрифты
 	Spike	Копилка
 	Insert Spike	Вставить из копилки
+	Font Diagnostics	Диагностика шрифтов
+	Complex script font:	Шрифт для сложных письменностей:
+	Complex script size:	Размер для сложных письменностей:
+	Complex script preview	Предпросмотр сложных письменностей
+	This text is in a script no installed font can draw: it shows as boxes.	Этот текст набран письменностью, которую не может отобразить ни один установленный шрифт: он показан квадратами.
+	Document fonts not installed:	Неустановленные шрифты документа:
