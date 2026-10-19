@@ -97,8 +97,12 @@ pub fn specs() -> Vec<CommandSpec> {
         CommandSpec::new("format.shadow", "Shadow", "Home › Font › Text Effects", |s, v| toggle(s, v, |r| r.shadow, |c, on| c.shadow = Some(on))),
         CommandSpec::new("format.emboss", "Emboss", "Home › Font › Font", |s, v| toggle(s, v, |r| r.emboss, |c, on| c.emboss = Some(on))),
         CommandSpec::new("format.engrave", "Engrave", "Home › Font › Font", |s, v| toggle(s, v, |r| r.engrave, |c, on| c.engrave = Some(on))),
-        CommandSpec::new("format.font", "Font", "Home › Font", font).key("Mod+Shift+F").params(r#"{"name"?: string, "eastAsia"?: string}"#),
-        CommandSpec::new("format.size", "Font Size", "Home › Font", size).key("Mod+Shift+P").params(r#"{"size": number}"#),
+        CommandSpec::new("format.font", "Font", "Home › Font", font)
+            .key("Mod+Shift+F")
+            .params(r#"{"name"?: string, "eastAsia"?: string, "complexScript"?: string}"#),
+        CommandSpec::new("format.size", "Font Size", "Home › Font", size)
+            .key("Mod+Shift+P")
+            .params(r#"{"size": number, "complexScript"?: bool (set only the complex-script size, `w:szCs`)}"#),
         CommandSpec::new("format.growFont", "Increase Font Size", "Home › Font", |s, _| step_size(s, 1)).key("Mod+Shift+. / Mod+Shift+>"),
         CommandSpec::new("format.shrinkFont", "Decrease Font Size", "Home › Font", |s, _| step_size(s, -1)).key("Mod+Shift+, / Mod+Shift+<"),
         CommandSpec::new("format.growFont1", "Grow Font 1 Point", "Home › Font", |s, _| nudge_size(s, 1.0)).key("Mod+]"),
@@ -303,6 +307,8 @@ fn underline(s: &mut Session, v: &Value) -> CmdResult {
 
 /// `format.font`: `name` is the font (Latin text, and Persian/Arabic text too); `eastAsia` sets the
 /// East Asian text's font on its own, as the Font dialog's Asian text font box does (#505).
+/// `complexScript` sets the complex-script font alone (`w:cs`), leaving the Latin font untouched,
+/// as the Font dialog's Complex Script box does (#19).
 fn font(s: &mut Session, v: &Value) -> CmdResult {
     let arg = |k: &str| -> Result<Option<String>, CmdError> {
         let Some(n) = v.get(k) else { return Ok(None) };
@@ -312,9 +318,9 @@ fn font(s: &mut Session, v: &Value) -> CmdResult {
         }
         Ok(Some(n.to_string()))
     };
-    let (name, east_asia) = (arg("name")?, arg("eastAsia")?);
-    if name.is_none() && east_asia.is_none() {
-        return Err(CmdError::Params("`name` or `eastAsia` (string) is required".into()));
+    let (name, east_asia, complex) = (arg("name")?, arg("eastAsia")?, arg("complexScript")?);
+    if name.is_none() && east_asia.is_none() && complex.is_none() {
+        return Err(CmdError::Params("`name`, `eastAsia` or `complexScript` (string) is required".into()));
     }
     // The font applies to Persian/Arabic text in the selection too (its complex-script font). A
     // Chinese, Japanese or Korean font is the East Asian text's font as well (`w:eastAsia`), as in
@@ -336,6 +342,12 @@ fn font(s: &mut Session, v: &Value) -> CmdResult {
         if let Some(n) = &ea {
             c.font_ea = Some(n.clone());
         }
+        // The Complex Script box sets only `w:cs`; the Latin and East Asian fonts stay as they are.
+        if let Some(n) = &complex {
+            c.font_cs = Some(n.clone());
+            c.font_cs_theme = None;
+            c.font_cs_thai = None;
+        }
     })
 }
 
@@ -346,6 +358,10 @@ fn size(s: &mut Session, v: &Value) -> CmdResult {
     }
     // Word rounds to half points.
     let sz = (sz * 2.0).round() / 2.0;
+    if p::bool(v, "complexScript") == Some(true) {
+        // The Font dialog's complex-script size (`w:szCs`) alone.
+        return apply(s, &|c| c.size_cs = Some(sz));
+    }
     apply(s, &|c| {
         c.size = Some(sz);
         c.size_cs = Some(sz);
@@ -815,6 +831,9 @@ pub fn state(s: &Session) -> Value {
     json!({
         "font": same(&|r| json!(r.font)),
         "fontEastAsia": same(&|r| json!(r.font_ea)),
+        // The complex-script face and size (`w:cs`/`w:szCs`), the Font dialog's Complex Script box.
+        "fontCs": same(&|r| json!(r.font_cs)),
+        "sizeCs": same(&|r| json!(r.size_cs)),
         "size": same(&|r| json!(r.size)),
         "bold": all.iter().all(|r| r.bold),
         "italic": all.iter().all(|r| r.italic),

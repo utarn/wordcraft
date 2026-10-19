@@ -1,10 +1,60 @@
 //! Fonts added at run time (#582): `font.add`, `font.list`, `font.remove`.
 
 use serde_json::json;
-use wordcraft_doc::Pos;
+use wordcraft_doc::{Document, Pos, StoryRef};
 
 use crate::Session;
 use crate::cmd::insert::base64_encode;
+
+/// The first run's direct character formatting.
+fn first_props(s: &Session) -> wordcraft_doc::CharProps {
+    s.doc.para(StoryRef::Body, &wordcraft_doc::Path::top(0)).map(|p| p.props_of_char(0).clone()).unwrap_or_default()
+}
+
+#[test]
+fn complex_script_font_and_size_do_not_overwrite_the_latin_ones() {
+    // #19: the Font dialog's Complex Script box sets `w:cs`/`w:szCs` alone.
+    let mut s = Session::new(Document::new());
+    s.run("document.setText", &json!({"text": "Hello ภาษาไทย"})).unwrap();
+    s.run("select.all", &json!({})).unwrap();
+    s.run("format.font", &json!({"name": "Georgia"})).unwrap();
+    s.run("format.font", &json!({"complexScript": "Noto Sans Thai"})).unwrap();
+    let c = first_props(&s);
+    assert_eq!((c.font.as_deref(), c.font_cs.as_deref()), (Some("Georgia"), Some("Noto Sans Thai")));
+    s.run("format.size", &json!({"size": 14})).unwrap();
+    s.run("format.size", &json!({"size": 18, "complexScript": true})).unwrap();
+    let c = first_props(&s);
+    assert_eq!((c.size, c.size_cs), (Some(14.0), Some(18.0)));
+    // The state exposes both to the dialog.
+    let st = s.run("format.state", &json!({})).unwrap();
+    assert_eq!(st["fontCs"], "Noto Sans Thai");
+    assert_eq!(st["sizeCs"], 18.0);
+    // Changing the complex-script face leaves the Latin one, and vice versa.
+    s.run("format.font", &json!({"complexScript": "TH Sarabun New"})).unwrap();
+    assert_eq!(first_props(&s).font.as_deref(), Some("Georgia"));
+    s.run("format.font", &json!({"name": "Arial"})).unwrap();
+    assert_eq!(first_props(&s).font_cs.as_deref(), Some("Arial"), "the Latin box formats the complex script too, as Word does");
+    assert!(s.run("format.font", &json!({"complexScript": " "})).is_err());
+}
+
+#[test]
+fn font_diagnostics_reports_complex_text_and_document_missing_families() {
+    let mut s = Session::new(Document::new());
+    s.run("document.setText", &json!({"text": "ภาษาไทย"})).unwrap();
+    s.run("select.all", &json!({})).unwrap();
+    s.run("format.font", &json!({"name": "No Such Family 19"})).unwrap();
+    let d = s.run("font.diagnostics", &json!({})).unwrap();
+    assert_eq!(d["complex"], true, "Thai is complex text");
+    let missing = d["missingFamilies"].as_array().map(|a| a.as_slice()).unwrap_or_default();
+    assert!(missing.iter().any(|m| m["family"] == "No Such Family 19"), "{d}");
+    assert_eq!(d["canAddFont"], true);
+    assert_eq!(d["canLoadSystemFonts"], true);
+    assert!(d["missingChars"].is_array());
+    // With no text the diagnostic still answers (and no panic on an empty document).
+    let mut s = Session::new(Document::new());
+    let d = s.run("font.diagnostics", &json!({"text": ""})).unwrap();
+    assert_eq!(d["complex"], false);
+}
 
 /// The bundled face `file` of family `original` renamed `family` (as long as `original`), so it
 /// is a font the database doesn't have.

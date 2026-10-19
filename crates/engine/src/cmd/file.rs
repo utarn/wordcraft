@@ -106,8 +106,29 @@ pub fn specs() -> Vec<CommandSpec> {
             };
             let path = if path.to_ascii_lowercase().ends_with(".pdf") { path.to_string() } else { format!("{path}.pdf") };
             let opts = export_options(s, v);
+            // Report the boxes the PDF would carry (characters no installed face draws) before
+            // writing it, so callers know instead of the boxes shipping silently.
+            let lay = s.export_layout_with(opts.markup);
+            let pdf_opts = wordcraft_pdf::PdfOptions {
+                include_markup: opts.markup,
+                comments: opts.markup && opts.comments,
+                ..Default::default()
+            };
+            let report = wordcraft_pdf::missing_glyphs(&s.doc, &lay, &pdf_opts);
             crate::io::save_path_with(std::path::Path::new(&path), &s.doc, None, &opts).map_err(CmdError::Failed)?;
-            Ok(json!({"path": path, "markup": opts.markup}))
+            let mut out = json!({"path": path, "markup": opts.markup});
+            if !report.is_empty() {
+                report.log();
+                let missing: Vec<Value> = report
+                    .missing_glyphs
+                    .iter()
+                    .map(|m| json!({"family": m.family, "chars": m.chars.iter().map(|c| format!("U+{:04X}", u32::from(*c))).collect::<Vec<_>>()}))
+                    .collect();
+                out["missingGlyphs"] = json!(missing);
+                let count: usize = report.missing_glyphs.iter().map(|m| m.chars.len()).sum();
+                s.status = format!("Exported {path} with {count} character(s) no installed font can draw (boxes)");
+            }
+            Ok(out)
         })
         .params(r#"{"path": string, "markup"?: bool (Print Markup: tracked changes marked up and each page scaled down beside the comments in balloons; default file.printMarkup)}"#)
         .pure(),

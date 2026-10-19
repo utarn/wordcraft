@@ -459,6 +459,24 @@ fn text_mapping_handles_ligatures_and_extras() {
 }
 
 #[test]
+fn pdf_export_reports_the_boxes_it_would_emit() {
+    // U+FFFF is a noncharacter no font maps: it shapes to .notdef (glyph 0), which prints as a
+    // box. The report names the family and character instead of shipping them silently.
+    let text = "Box \u{FFFF} space";
+    let d = Document::from_text(text);
+    let lay = layout(&d, &mut LayoutCache::new(), &LayoutOptions::default());
+    let (_, report) = export_layout_with_report(&d, &lay, &PdfOptions::default()).unwrap();
+    assert!(!report.is_empty(), "the unmapped character is reported");
+    let missing = report.missing_glyphs.iter().find(|m| m.chars.contains(&'\u{FFFF}')).unwrap_or_else(|| panic!("{report:?}"));
+    assert!(!missing.family.is_empty());
+    assert!(!missing.chars.iter().any(|c| c.is_whitespace()), "spaces are not boxes");
+    // A document every face covers reports nothing.
+    let d = Document::from_text("Plain Latin text");
+    let lay = layout(&d, &mut LayoutCache::new(), &LayoutOptions::default());
+    assert!(missing_glyphs(&d, &lay, &PdfOptions::default()).is_empty());
+}
+
+#[test]
 fn shapes_have_paths() {
     let r = Rect::new(0.0, 0.0, 10.0, 10.0);
     for k in [

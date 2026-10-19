@@ -74,6 +74,64 @@ fn has(list: &[String], family: &str) -> bool {
 }
 
 #[test]
+fn discovery_searches_xdg_flatpak_snap_nix_x11_and_bsd_font_dirs() {
+    let home = Path::new("/home/writer");
+    let dirs = unix_font_dirs(Some(Path::new("/home/writer/.local/share")), Some("/opt/share:/usr/share"), Some(home));
+    let has = |p: &str| dirs.iter().any(|d| d == Path::new(p));
+    // XDG data directories, the user's and the system's (the default list too when unset).
+    for p in [
+        "/home/writer/.local/share/fonts",
+        "/opt/share/fonts",
+        "/usr/share/fonts",
+        "/home/writer/.fonts",
+        // Flatpak exports, user and system.
+        "/home/writer/.local/share/flatpak/exports/share/fonts",
+        "/var/lib/flatpak/exports/share/fonts",
+        "/opt/share/flatpak/exports/share/fonts",
+        // Snap exports.
+        "/var/lib/snapd/desktop/fonts",
+        // Nix profiles.
+        "/home/writer/.nix-profile/share/fonts",
+        "/home/writer/.local/state/nix/profiles/profile/share/fonts",
+        "/nix/var/nix/profiles/default/share/fonts",
+        "/run/current-system/sw/share/fonts",
+        // X11 and the BSD local prefixes.
+        "/usr/lib/X11/fonts",
+        "/usr/X11R6/lib/X11/fonts",
+        "/usr/X11R7/lib/X11/fonts",
+        "/usr/local/lib/X11/fonts",
+        "/usr/pkg/share/fonts",
+        "/usr/pkg/lib/X11/fonts",
+    ] {
+        assert!(has(p), "{p} in {dirs:?}");
+    }
+    // Each folder once.
+    let mut unique = dirs.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), dirs.len(), "{dirs:?}");
+    // No XDG values: the standard default data directories are used.
+    let defaults = unix_font_dirs(None, None, Some(home));
+    assert!(defaults.iter().any(|d| d == Path::new("/usr/local/share/fonts")));
+    assert!(defaults.iter().any(|d| d == Path::new("/usr/share/fonts")));
+}
+
+#[test]
+fn snap_packages_contribute_their_font_folders() {
+    let root = std::env::temp_dir().join(format!("wc-snap-fonts-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("thai-fonts/current/usr/share/fonts")).unwrap();
+    std::fs::create_dir_all(root.join("writer/current/.local/share/fonts")).unwrap();
+    std::fs::write(root.join("not-a-package"), b"").unwrap();
+    let dirs = snap_font_dirs(&root);
+    assert!(dirs.iter().any(|d| d.ends_with("thai-fonts/current/usr/share/fonts")), "{dirs:?}");
+    assert!(dirs.iter().any(|d| d.ends_with("writer/current/.local/share/fonts")), "{dirs:?}");
+    // A missing root is no folders, never a panic.
+    assert!(snap_font_dirs(&root.join("missing")).is_empty());
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
 fn every_lookup_by_name_finds_installed_fonts_in_a_fresh_database() {
     let dir = font_dir("fresh");
     // Each lookup is the first thing a new database is asked. A folder listed twice is read once.
