@@ -22,6 +22,7 @@ wordcraft-formats = { path = "crates/formats" }
 wordcraft-render = { path = "crates/render" }
 wordcraft-pdf = { path = "crates/pdf" }
 wordcraft-proof = { path = "crates/proof" }
+wordcraft-thai = { path = "crates/thai" }
 wordcraft-engine = { path = "crates/engine" }
 wordcraft-mcp = { path = "crates/mcp" }
 wordcraft-zotero = { path = "crates/zotero" }
@@ -43,6 +44,7 @@ unicode-bidi = "0.3"
 unicode-segmentation = "1"
 unicode-linebreak = "0.1"
 unicode-script = "0.5"
+fst = "0.4"
 regex = { version = "1", default-features = false, features = ["std", "unicode", "perf"] }
 regex-automata = { version = "0.4", default-features = false, features = ["std", "syntax", "meta", "nfa-pikevm", "unicode"] }
 
