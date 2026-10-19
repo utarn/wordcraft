@@ -1545,9 +1545,12 @@ mod tests {
             let (mut dark, mut grey) = ((0.0, 0.0, 0.0f64), (0.0, 0.0, 0.0f64));
             for (x, y) in (100..800).flat_map(|x| (100..300).map(move |y| (x, y))) {
                 let v = img.pixel(x, y)[0];
+                // The grey copy is Rgb(128, 128, 128) (`run_effects`): band tightly around 128.
+                // A wider band also catches the dark letters' antialiasing, whose symmetric
+                // spread across the glyph averages the copy's offset away.
                 let acc = match v {
                     0..60 => &mut dark,
-                    100..=160 => &mut grey,
+                    120..=136 => &mut grey,
                     _ => continue,
                 };
                 *acc = (acc.0 + 1.0, acc.1 + f64::from(x), acc.2 + f64::from(y));

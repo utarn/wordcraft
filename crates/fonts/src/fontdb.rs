@@ -229,11 +229,12 @@ impl FontFace {
         }
         self.skrifa().is_some_and(|f| f.charmap().map(c).is_some())
     }
-    /// Does the face carry OpenType glyph substitution (GSUB)? Complex scripts (Myanmar, Khmer,
-    /// Indic…) need it to reorder and stack; fonts with only Apple's AAT tables draw them unshaped.
+    /// Does the face carry the tables needed to shape complex scripts? A face qualifies with
+    /// OpenType glyph substitution (GSUB), positioning/definition (GPOS or GDEF), or Apple's AAT
+    /// metamorphosis table (`morx`): Apple's Thai faces (Thonburi, Sathu, Silom) carry only
+    /// `morx`, and the shaper applies those, so they are not demoted against OpenType faces.
     pub fn has_layout_tables(&self) -> bool {
-        use skrifa::raw::TableProvider;
-        self.skrifa().is_some_and(|f| f.gsub().is_ok())
+        self.skrifa().is_some_and(|f| has_shaping_tables(&f))
     }
     /// Units per em.
     pub fn units_per_em(&self) -> f64 {
@@ -268,6 +269,13 @@ impl FontFace {
     pub fn is_east_asian(&self) -> bool {
         self.skrifa().is_some_and(|f| east_asian_font(&f))
     }
+}
+
+/// Does `f` carry shaping tables? OpenType GSUB, GPOS or GDEF, or Apple AAT `morx` (which
+/// Thonburi, Sathu and Silom use for Thai instead of OpenType tables).
+fn has_shaping_tables(f: &skrifa::FontRef<'_>) -> bool {
+    use skrifa::raw::TableProvider;
+    f.gsub().is_ok() || f.gpos().is_ok() || f.gdef().is_ok() || f.morx().is_ok()
 }
 
 /// Is `f` an East Asian (Chinese, Japanese or Korean) font: do its OS/2 code pages say so
@@ -1858,6 +1866,31 @@ mod tests {
         bundled.set_system_fallback(false);
         let latin = bundled.face(FALLBACK_FAMILY, "Regular");
         assert!(bundled.fallback_for_run(&chars, latin.id(), false, false).is_none());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn shaping_capability_accepts_opentype_and_apple_aat_tables() {
+        let font = |tag: &[u8; 4], table: Vec<u8>| mini_font(&[(*tag, table)]);
+        let header = |offsets: usize| {
+            let mut t = 0x0001_0000_u32.to_be_bytes().to_vec();
+            t.extend(vec![0u8; offsets * 2]);
+            t
+        };
+        // No layout tables at all.
+        let no_tables: &[([u8; 4], Vec<u8>)] = &[];
+        let none = mini_font(no_tables);
+        assert!(!has_shaping_tables(&skrifa::FontRef::new(&none).unwrap()));
+        // Each qualifies on its own: GSUB, GPOS, GDEF, and Apple's morx (Thonburi/Sathu/Silom).
+        for (tag, table) in [(*b"GSUB", header(3)), (*b"GPOS", header(3)), (*b"GDEF", header(4)), (*b"morx", [0u8, 2, 0, 0, 0, 0, 0, 0].to_vec())] {
+            let data = font(&tag, table);
+            let f = skrifa::FontRef::new(&data).unwrap();
+            assert!(has_shaping_tables(&f), "{}", String::from_utf8_lossy(&tag));
+        }
+        // An unrelated table does not.
+        let data = font(b"name", vec![0, 0, 0, 0, 0, 0]);
+        let other = skrifa::FontRef::new(&data).unwrap();
+        assert!(!has_shaping_tables(&other));
     }
 
     #[test]

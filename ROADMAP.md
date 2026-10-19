@@ -137,6 +137,7 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 - 2026-10-15: Find opens Navigation on Results; editing the query restores Results after manual Headings/Pages navigation. Typed and selected-text searches retain document contents (#2096).
 
 | Date | What landed |
+| 2026-10-18 | Thai fonts (#15): one ordered, per-platform substitution policy now drives both Word font substitution and script fallback. General text tries TH Sarabun New, then TH SarabunPSK, then the platform's faces; serif requests use serif-only lists (Browallia is serif) and never a loopless sans. Tahoma, Microsoft Sans Serif and Arial Unicode MS are recognised as Thai-capable Latin families, and a face with GSUB, GPOS/GDEF or AAT `morx` counts as shaping-capable, so Apple's AAT-only Thai faces are not demoted. Missing Thai faces degrade to the existing coverage search. |
 | 2026-10-16 | The Spike, as in Word: Ctrl+F3 (⌘F3 on macOS) cuts the selection and adds it to the end of the Spike, each piece followed by a paragraph mark; Ctrl+Shift+F3 (⌘⇧F3) inserts everything collected, in order and with its formatting, and empties the Spike. The clipboard is left alone; each is one undo step. The Spike is the AutoText entry "Spike", so Insert › Quick Parts inserts it without emptying it. It lasts for the session (Word keeps it in Normal.dotm) |
 | 2026-10-16 | DOCX two lines in one and horizontal in vertical (`w:eastAsianLayout`: id, combine, brackets, vert, vertCompress) are read and kept on save, in runs and character styles, instead of being dropped. Layout doesn't apply them yet. |
 | 2026-10-16 | Read Aloud speaks Russian, Ukrainian, Greek, Arabic, Hebrew, CJK and Thai text with a voice for its language instead of spelling out letters (#1843): the sentence's language comes from its run's tag (`w:bidi` for right-to-left text) or, when that disagrees with the script, from its letters, even when English letters outnumber them; Windows reads the text as UTF-8 and picks an installed voice of that language, macOS `say -v` and Linux `espeak -v` get the same language. The user's own voice stays whenever it already speaks the language (English documents read exactly as before), and a voice espeak lacks falls back to the default voice instead of silence. Not run on Windows or macOS here. |
@@ -447,6 +448,7 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-18 | trivial | Progress log: one ordered per-platform Thai font substitution policy (#15) |
 | 2026-10-16 | trivial | Progress log: the Spike |
 | 2026-10-16 | trivial | Progress log: `w:eastAsianLayout` kept on save |
 | 2026-10-15 | trivial | Progress log: undrawable private-use list bullets show the level's default bullet (#1683) |
