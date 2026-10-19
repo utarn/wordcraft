@@ -313,6 +313,9 @@ fn font(s: &mut Session, v: &Value) -> CmdResult {
         if let Some(n) = &name {
             c.font = Some(n.clone());
             c.font_cs = Some(n.clone());
+            // A concrete choice replaces a theme reference from the file.
+            c.font_cs_theme = None;
+            c.font_cs_thai = None;
         }
         if let Some(n) = &ea {
             c.font_ea = Some(n.clone());
@@ -656,7 +659,14 @@ fn set(s: &mut Session, v: &Value) -> CmdResult {
     props.size_cs = props.size_cs.or(props.size);
     props.bold_cs = props.bold_cs.or(props.bold);
     props.italic_cs = props.italic_cs.or(props.italic);
-    apply(s, &|c| c.overlay(&props))
+    apply(s, &|c| {
+        c.overlay(&props);
+        // A concrete complex-script family replaces a theme reference from the file.
+        if props.font_cs.is_some() && props.font_cs_theme.is_none() {
+            c.font_cs_theme = None;
+            c.font_cs_thai = None;
+        }
+    })
 }
 
 /// What the ribbon shows: the formatting at the selection (mixed values are null).
