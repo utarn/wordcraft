@@ -1185,11 +1185,18 @@ fn theme_xml(doc: &Document) -> Vec<u8> {
     }
     w.close("a:clrScheme");
     w.open("a:fontScheme", &[("name", name)]);
-    for (tag, face) in [("a:majorFont", &s.major_font), ("a:minorFont", &s.minor_font)] {
+    for (tag, face, cs, thai) in
+        [("a:majorFont", &s.major_font, &s.major_cs_font, &s.major_thai_font), ("a:minorFont", &s.minor_font, &s.minor_cs_font, &s.minor_thai_font)]
+    {
         w.open(tag, &[]);
         w.empty("a:latin", &[("typeface", face)]);
         w.empty("a:ea", &[("typeface", "")]);
-        w.empty("a:cs", &[("typeface", "")]);
+        w.empty("a:cs", &[("typeface", cs)]);
+        // The drawing theme's Thai script typeface, kept so theme-based Thai documents resolve
+        // to the requested family after a save (#18).
+        if !thai.is_empty() {
+            w.empty("a:font", &[("script", "Thai"), ("typeface", thai)]);
+        }
         w.close(tag);
     }
     w.close("a:fontScheme");

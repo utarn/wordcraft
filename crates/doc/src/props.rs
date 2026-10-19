@@ -428,12 +428,24 @@ pub struct CharProps {
     /// Right-to-left run (OOXML `w:rtl`): its characters are complex script and read right to left.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rtl: Option<bool>,
-    /// Format the whole run with the complex-script properties below (OOXML `w:cs`).
+    /// Use complex-script formatting for the run's complex-script characters (OOXML `w:cs`).
+    /// Each character is still drawn per script: Latin text keeps the Latin font and size while
+    /// Thai, Indic and right-to-left text use the complex-script family and `w:szCs` size.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cs: Option<bool>,
     /// Complex-script font (Arabic, Persian, Hebrew…; OOXML `w:rFonts/@w:cs`). `None` = `font`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub font_cs: Option<String>,
+    /// The theme slot the complex-script font came from (`w:rFonts/@w:cstheme`, e.g.
+    /// `minorBidi`). Kept so the save writes the theme reference back; [`Self::font_cs`] holds
+    /// the family the theme resolved to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_cs_theme: Option<String>,
+    /// The theme's Thai script typeface (`<a:font script="Thai">`), when the theme slot names
+    /// one. Thai text requests this family; other complex scripts keep [`Self::font_cs`] (the
+    /// theme's generic `a:cs` face). `None` = use `font_cs` for Thai too.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub font_cs_thai: Option<String>,
     /// East Asian font (Chinese, Japanese and Korean text; OOXML `w:rFonts/@w:eastAsia`). `None` =
     /// inherit, then `font`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -580,7 +592,7 @@ impl CharProps {
     pub fn minus(mut self, base: &CharProps) -> CharProps {
         drop_same_fields!(self, base; style, font, sym_font, size, bold, italic, underline, underline_color, strike, double_strike, color, highlight,
             shading, border, vert_align, caps, small_caps, hidden, spacing, scale, position, kern, outline, shadow, emboss, engrave, lang, no_proof, rtl,
-            cs, font_cs, font_ea, size_cs, bold_cs, italic_cs, lang_bidi, lang_ea, east_asian_layout, link, ins, del, ligatures);
+            cs, font_cs, font_cs_theme, font_cs_thai, font_ea, size_cs, bold_cs, italic_cs, lang_bidi, lang_ea, east_asian_layout, link, ins, del, ligatures);
         self
     }
 
@@ -591,7 +603,7 @@ impl CharProps {
     pub fn overlay(&mut self, patch: &CharProps) {
         overlay_fields!(self, patch; style, font, sym_font, size, bold, italic, underline, underline_color, strike, double_strike, color, highlight,
             shading, border, vert_align, caps, small_caps, hidden, spacing, scale, position, kern, outline, shadow, emboss, engrave, lang, no_proof, rtl,
-            cs, font_cs, font_ea, size_cs, bold_cs, italic_cs, lang_bidi, lang_ea, east_asian_layout, link, ins, del, fmt_change, ligatures);
+            cs, font_cs, font_cs_theme, font_cs_thai, font_ea, size_cs, bold_cs, italic_cs, lang_bidi, lang_ea, east_asian_layout, link, ins, del, fmt_change, ligatures);
         if let Some(p) = &patch.text_effects {
             self.text_effects.get_or_insert_with(Default::default).overlay(p);
         }

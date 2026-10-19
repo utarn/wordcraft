@@ -604,6 +604,14 @@ pub struct Settings {
     /// Theme fonts (major = headings, minor = body).
     pub major_font: String,
     pub minor_font: String,
+    /// The drawing theme's complex-script fonts (`a:cs` in `a:majorFont`/`a:minorFont`). Empty
+    /// when the theme names none.
+    pub major_cs_font: String,
+    pub minor_cs_font: String,
+    /// The drawing theme's Thai script typefaces (`<a:font script="Thai" typeface="…"/>`). Empty
+    /// when the theme names none; these are the requested Thai family for theme slots.
+    pub major_thai_font: String,
+    pub minor_thai_font: String,
     /// Theme colours: dk1 lt1 dk2 lt2 accent1..6 hlink folHlink.
     pub theme_colors: Vec<Rgb>,
     pub theme_name: String,
@@ -793,6 +801,10 @@ impl Default for Settings {
             watermark: None,
             major_font: styles::HEADING_FONT.into(),
             minor_font: styles::BODY_FONT.into(),
+            major_cs_font: String::new(),
+            minor_cs_font: String::new(),
+            major_thai_font: String::new(),
+            minor_thai_font: String::new(),
             theme_colors: THEME_COLORS.to_vec(),
             theme_name: "Craft".into(),
             footnote_format: section::NumFormat::Decimal,

@@ -675,13 +675,6 @@ fn caps_expands(c: char) -> bool {
     c.to_uppercase().nth(1).is_some()
 }
 
-/// Combining marks and joiners (bidi classes NSM, BN: harakat, ZWNJ, ZWJ) belong to the
-/// character before them: same font, same shaping run, so Arabic joining isn't broken.
-fn is_mark(c: char) -> bool {
-    use unicode_bidi::BidiClass::{BN, NSM};
-    matches!(unicode_bidi::bidi_class(c), NSM | BN) && !c.is_control()
-}
-
 /// A digit Word's Numeral modes substitute: ASCII or Arabic-Indic (U+0660–U+0669).
 fn is_numeral_digit(c: char) -> bool {
     c.is_ascii_digit() || ('\u{660}'..='\u{669}').contains(&c)
@@ -834,26 +827,17 @@ fn lookup_family<'f>(doc: &Document, font: &'f str) -> &'f str {
     }
 }
 
-/// One face for a run in a Thai font that isn't installed (#1549): Word substitutes one font
-/// (Cordia New) for the whole run, so the Latin letters, digits and ฿ keep the Thai letters' face
-/// and size. `None` unless `font` is a Thai family, it was substituted, and its substitute
-/// `primary` lacks some of the run's Thai or Latin characters; then the first face covering all of
-/// them, if one does. Other families keep Latin text in their own substitute, as Word does.
-pub(crate) fn thai_run_face(font: &str, substituted: bool, primary: FaceRef, text: &str, bold: bool, italic: bool) -> Option<FaceRef> {
-    if !substituted || !wordcraft_fonts::word::is_thai_family(font) {
-        return None;
-    }
-    let run: Vec<char> = text.chars().filter(|c| thai_or_latin(*c)).collect();
-    if run.iter().all(|c| primary.covers(*c)) {
-        return None;
-    }
-    wordcraft_fonts::FontDb::global().fallback_for_run(&run, primary.id(), bold, italic).map(|f| FaceRef::of(&f))
-}
-
-/// Text a Thai substitute draws: Thai letters, digits and signs (฿), and Latin letters, digits
-/// and punctuation.
-fn thai_or_latin(c: char) -> bool {
-    matches!(u32::from(c), 0x0021..=0x024F | 0x0E00..=0x0E7F) && !c.is_whitespace() && !c.is_control() && c != SOFT_HYPHEN
+/// One face for a run's Thai characters (#18): a run containing Thai resolves per run, per
+/// script, so its Thai letters, marks, digits and baht sign are drawn in one face while Latin
+/// text keeps the run's ordinary Latin substitute. An installed family that draws the Thai text
+/// wins exactly; otherwise the face comes from the shared ordered policy ([`wordcraft_fonts::thai`]).
+/// `None` when the run has no Thai characters.
+pub(crate) fn thai_run_face(requested: &str, thai: &[char], bold: bool, italic: bool) -> Option<FaceRef> {
+    let family = wordcraft_fonts::thai::resolve_run(requested, wordcraft_fonts::thai::current_platform(), wordcraft_fonts::FontDb::global(), thai)?;
+    let face = wordcraft_fonts::word::resolve(&family, bold, italic).face;
+    // The policy chose an installed family; `resolve` keeps it. A family that vanished between
+    // the search and the lookup still gives a usable face rather than nothing.
+    Some(face)
 }
 
 impl<'a> Builder<'a> {
@@ -961,12 +945,19 @@ impl<'a> Builder<'a> {
         };
         let use_levels = !levels.is_empty();
         let context = if self.env.numeral == NumeralMode::Context && use_levels { context_digit_dirs(text, levels, lbase) } else { Vec::new() };
-        // A missing Thai font: one face for the run's Thai and Latin text (#1549). A run with its
-        // own complex-script font keeps that font for the Thai letters.
-        let run_face: Option<FaceRef> = if primary_cs.is_none_or(|f| f.id() == primary.id()) {
-            thai_run_face(&rc.font, resolved.substituted, primary, text, rc.bold, rc.italic)
-        } else {
+        // A run containing Thai resolves once for the whole Thai portion (#18): the Thai letters,
+        // marks, digits and baht sign are drawn in one face (the requested family when installed,
+        // else the shared ordered policy's face), while Latin text keeps its ordinary substitute.
+        // A run's complex-script font (`w:cs`/`w:cstheme`) is the requested Thai family.
+        let thai: Vec<char> = text.chars().filter(|c| wordcraft_fonts::thai::is_thai(*c)).collect();
+        let thai_face: Option<FaceRef> = if thai.is_empty() {
             None
+        } else {
+            // The theme's Thai script typeface outranks the theme's generic complex-script font;
+            // otherwise a run's complex-script family (`w:cs`/`w:cstheme`) is the requested face.
+            let requested = rc.font_cs_thai.as_deref().unwrap_or_else(|| rc_cs.as_ref().map_or(rc.font.as_str(), |r| r.font.as_str()));
+            let (bold, italic) = (rc.bold_cs, rc.italic_cs);
+            thai_run_face(requested, &thai, bold, italic)
         };
         // One fallback face for the run's East Asian characters: the first face in fallback order
         // covering every character the primary font lacks, so the run draws in a single CJK face
@@ -996,7 +987,9 @@ impl<'a> Builder<'a> {
             // fallback face are picked for the displayed char, so Hindi digits land in an
             // Arabic-capable face and Western digits in a Latin one.
             let dc = self.numeral_char(&context, i, c, rtl);
-            let mark = is_mark(c);
+            // Marks, joiners and SARA AM belong to the character before them, so they never start
+            // a new face and the Thai face covers a whole word, not one character at a time.
+            let mark = wordcraft_fonts::thai::joins_previous_face(c);
             let complex = match cur {
                 Some(k) if mark => k.complex,
                 _ => rc_cs.is_some() && rc.uses_complex(dc),
@@ -1004,9 +997,11 @@ impl<'a> Builder<'a> {
             let prim = if complex { primary_cs.unwrap_or(primary) } else { primary };
             let face = match cur {
                 Some(k) if mark => k.face,
+                // Every Thai character of the run uses its one Thai face (#18).
+                _ if !c.is_control() && c != SOFT_HYPHEN && wordcraft_fonts::thai::is_thai(dc) && thai_face.is_some_and(|f| f.covers(dc)) => {
+                    thai_face
+                }
                 _ if !complex && east_asian(c) && primary_ea.is_some_and(|f| f.covers(c)) => primary_ea,
-                // The run's one substitute face for a missing Thai font (#1549).
-                _ if !c.is_control() && c != SOFT_HYPHEN && run_face.is_some_and(|f| f.covers(dc)) => run_face,
                 _ if prim.covers(dc) || c.is_whitespace() || c.is_control() || c == SOFT_HYPHEN => None,
                 // Stay in the fallback face the word started in while it covers the letters.
                 Some(SegKey { face: Some(f), .. }) if f.covers(dc) => Some(f),
