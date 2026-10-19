@@ -74,15 +74,18 @@ pub fn needs_layout_tables(c: char) -> bool {
 }
 
 /// Families preferred, in order, for a character of `c`'s script when the document's font lacks
-/// it: the platforms' own OpenType fonts and the open Noto/SIL families. Apple's older fonts for
-/// these scripts carry only AAT tables (which the shaper doesn't read), so they come last.
+/// it: the platforms' own fonts and the open Noto/SIL families. Thai returns the same ordered
+/// policy Word font substitution uses ([`crate::thai`]), so both paths choose one face. Other
+/// scripts' families are ordered as before.
 pub fn script_fallbacks(c: char) -> &'static [&'static str] {
     match c.script() {
         Script::Myanmar => &["Myanmar Text", "Noto Sans Myanmar", "Padauk", "Pyidaungsu", "Noto Serif Myanmar", "Myanmar Sangam MN", "Myanmar MN"],
         Script::Khmer => &["Leelawadee UI", "Khmer UI", "Noto Sans Khmer", "Noto Serif Khmer", "Khmer OS", "Khmer Sangam MN", "Khmer MN"],
         Script::Devanagari => &["Nirmala UI", "Mangal", "Kohinoor Devanagari", "Noto Sans Devanagari", "Noto Serif Devanagari", "Lohit Devanagari"],
         Script::Bengali => &["Nirmala UI", "Vrinda", "Kohinoor Bangla", "Noto Sans Bengali", "Noto Serif Bengali", "Lohit Bengali"],
-        Script::Thai => &["Leelawadee UI", "Leelawadee", "Tahoma", "Thonburi", "Noto Sans Thai", "Noto Serif Thai"],
+        // The same ordered policy Word font substitution uses (#15), so a Thai character falls
+        // back to the same face whichever path found it.
+        Script::Thai => crate::thai::candidates(crate::thai::Role::Sans, crate::thai::current_platform()),
         Script::Lao => &["Leelawadee UI", "Lao UI", "Noto Sans Lao", "Noto Serif Lao", "Lao Sangam MN"],
         Script::Tamil | Script::Telugu | Script::Kannada | Script::Malayalam | Script::Gujarati | Script::Gurmukhi | Script::Oriya => &["Nirmala UI"],
         _ => &[],
@@ -121,6 +124,16 @@ mod tests {
         // Japanese kana and kanji stay together.
         assert_eq!(script_runs("日本語のテキスト").len(), 1);
         assert_eq!(script_runs(""), vec![0..0]);
+    }
+
+    #[test]
+    fn thai_script_fallback_shares_the_word_substitution_policy() {
+        use crate::thai::{Role, candidates, current_platform};
+        assert_eq!(script_fallbacks('\u{0E19}'), candidates(Role::Sans, current_platform()));
+        assert_eq!(fallback_rank('\u{0E19}', "TH Sarabun New"), 0);
+        assert!(fallback_rank('\u{0E19}', "TH Sarabun New") < fallback_rank('\u{0E19}', "TH SarabunPSK"));
+        // A Thai-capable Latin family ranks in the same table, above an unrelated Latin face.
+        assert!(fallback_rank('\u{0E19}', "Tahoma") < fallback_rank('\u{0E19}', "Carlito"));
     }
 
     #[test]
