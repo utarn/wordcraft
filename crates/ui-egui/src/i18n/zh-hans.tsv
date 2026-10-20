@@ -2271,3 +2271,9 @@
 	All Fonts	所有字体
 	Spike	图文场
 	Insert Spike	插入图文场
+	Font Diagnostics	字体诊断
+	Complex script font:	复杂文种字体:
+	Complex script size:	复杂文种字号:
+	Complex script preview	复杂文种预览
+	This text is in a script no installed font can draw: it shows as boxes.	此文本使用的文种没有任何已安装字体能够绘制：将显示为方框。
+	Document fonts not installed:	文档使用但未安装的字体:

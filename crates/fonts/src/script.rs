@@ -108,6 +108,31 @@ pub fn fallback_rank(c: char, family: &str) -> usize {
     list.len() + 1
 }
 
+/// The distinct complex-script characters (Thai, Arabic, the Indic scripts, Myanmar, Khmer…) in
+/// `text` that no installed face can draw: the boxes a page would show. Bounded to
+/// [`MAX_DIAGNOSTIC_CHARS`] distinct characters and to that many fallback searches, however
+/// hostile the text or the installed fonts.
+pub fn uncovered_complex(db: &crate::FontDb, text: &str) -> Vec<char> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    for c in text.chars() {
+        if !needs_layout_tables(c) || c.is_control() || c.is_whitespace() || !seen.insert(c) {
+            continue;
+        }
+        // A placeholder face (`.LastResort`) has no real glyph for anything: it draws a box.
+        if db.fallback_for(c, 0).is_none_or(|f| f.is_placeholder()) {
+            out.push(c);
+            if out.len() >= MAX_DIAGNOSTIC_CHARS {
+                break;
+            }
+        }
+    }
+    out
+}
+
+/// Most distinct uncovered characters a diagnostic reports (bounds font searches).
+pub const MAX_DIAGNOSTIC_CHARS: usize = 1024;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -144,5 +169,21 @@ mod tests {
         assert!(fallback_rank('မ', "Noto Sans Myanmar") < fallback_rank('မ', "Myanmar Sangam MN"));
         assert!(fallback_rank('த', "Noto Sans Tamil") < fallback_rank('த', "Arial"));
         assert_eq!(fallback_rank('a', "Arial"), fallback_rank('a', "Noto Sans"));
+    }
+
+    #[test]
+    fn uncovered_complex_reports_the_characters_that_would_be_boxes() {
+        // No system fonts and no bundled Thai face: every Thai character is a box, once.
+        let db = crate::FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let missing = uncovered_complex(&db, "น้ำ น้ำ ABC");
+        assert!(missing.contains(&'\u{0E19}'), "{missing:?}");
+        assert!(missing.contains(&'\u{0E33}'), "SARA AM is complex too: {missing:?}");
+        assert_eq!(missing.len(), missing.iter().collect::<std::collections::HashSet<_>>().len(), "each character once");
+        assert!(!missing.iter().any(|c| c.is_ascii()), "Latin text is not a complex-script box");
+        // Latin-only text asks for nothing, and hostile text is bounded.
+        assert!(uncovered_complex(&db, "Plain Latin 123").is_empty());
+        let long: String = (0..(MAX_DIAGNOSTIC_CHARS + 100)).filter_map(|i| char::from_u32(0x0E00 + i as u32)).collect();
+        assert!(uncovered_complex(&db, &long).len() <= MAX_DIAGNOSTIC_CHARS);
     }
 }

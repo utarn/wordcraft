@@ -155,6 +155,17 @@ pub enum Dialog {
         font_was: String,
         font_ea: String,
         font_ea_was: String,
+        /// The complex-script face (`w:cs`) and size (`w:szCs`), set without touching the Latin
+        /// font or size (#19), and their values when the dialog opened.
+        font_cs: String,
+        font_cs_was: String,
+        size_cs: String,
+        /// Show the complex-script box: the selection contains Thai or another complex script.
+        complex: bool,
+        /// No installed face can draw the selection's complex-script characters.
+        complex_missing: bool,
+        /// Families the document asks for that are not installed.
+        missing_families: Vec<String>,
         /// Show the Asian text font box: a Chinese or Japanese interface, or East Asian text or
         /// an Asian font in the selection.
         asian: bool,
@@ -892,11 +903,28 @@ impl Dialog {
                     text
                 };
                 let asian = ["zh", "ja", "ko"].iter().any(|l| lang.starts_with(l)) || !font_ea.is_empty() || text.chars().any(east_asian_char);
+                let font_cs = app.previews.font_shown(&s("fontCs"));
+                // Thai and the other complex scripts get their own face box, with a diagnostic
+                // when no installed face can draw them (#19).
+                let diag = app.session.run("font.diagnostics", &json!({"text": text})).unwrap_or_default();
+                let complex = diag.get("complex").and_then(Value::as_bool).unwrap_or_else(|| text.chars().any(complex_char));
+                let complex_missing = diag.get("complexMissing").and_then(Value::as_bool).unwrap_or(false);
+                let missing_families = diag
+                    .get("missingFamilies")
+                    .and_then(Value::as_array)
+                    .map(|a| a.iter().filter_map(|m| m.get("family").and_then(Value::as_str).map(str::to_string)).collect())
+                    .unwrap_or_default();
                 let mut d = Dialog::Font {
                     font_was: font.clone(),
                     font,
                     font_ea_was: font_ea.clone(),
                     font_ea,
+                    font_cs_was: font_cs.clone(),
+                    font_cs,
+                    size_cs: st.get("sizeCs").and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default(),
+                    complex,
+                    complex_missing,
+                    missing_families,
                     asian,
                     size: st.get("size").and_then(Value::as_f64).map(|v| v.to_string()).unwrap_or_default(),
                     bold: b("bold"),
@@ -1470,7 +1498,26 @@ pub(crate) fn buttons(ui: &mut Ui, ok: &str) -> (bool, bool) {
 
 /// The character properties the Font dialog's fields stand for.
 fn font_props(d: &Dialog) -> serde_json::Map<String, Value> {
-    let Dialog::Font { font, font_ea, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing, .. } = d else {
+    let Dialog::Font {
+        font,
+        font_ea,
+        font_cs,
+        size_cs,
+        size,
+        bold,
+        italic,
+        underline,
+        strike,
+        sup,
+        sub,
+        small_caps,
+        caps,
+        hidden,
+        color,
+        spacing,
+        ..
+    } = d
+    else {
         return serde_json::Map::new();
     };
     let mut props = serde_json::Map::new();
@@ -1496,8 +1543,14 @@ fn font_props(d: &Dialog) -> serde_json::Map<String, Value> {
     if !font_ea.trim().is_empty() {
         props.insert("fontEa".into(), json!(font_ea.trim()));
     }
+    if !font_cs.trim().is_empty() {
+        props.insert("fontCs".into(), json!(font_cs.trim()));
+    }
     if let Ok(s) = size.trim().parse::<f64>() {
         props.insert("size".into(), json!(s));
+    }
+    if let Ok(s) = size_cs.trim().parse::<f64>() {
+        props.insert("sizeCs".into(), json!(s));
     }
     if let Some(c) = wordcraft_doc::Rgb::parse(color) {
         props.insert("color".into(), json!({"Rgb": [c.0, c.1, c.2]}));
@@ -1514,19 +1567,35 @@ fn east_asian_char(c: char) -> bool {
     matches!(u32::from(c), 0x1100..=0x11FF | 0x2E80..=0x9FFF | 0xA960..=0xA97F | 0xAC00..=0xD7FF | 0xF900..=0xFAFF | 0xFE30..=0xFE4F | 0xFF00..=0xFFEF | 0x20000..=0x3FFFF)
 }
 
+/// Is `c` Thai or another complex-script character (Arabic, the Indic scripts, Myanmar, Khmer…)?
+/// Such a selection gets the Font dialog's Complex Script font box (#19).
+fn complex_char(c: char) -> bool {
+    wordcraft_fonts::needs_layout_tables(c)
+}
+
 /// The Font dialog's OK: one formatting step that sets only the properties the user changed, so
 /// formatting the dialog can't show or left alone stays as it is. Fonts are set by their stored
 /// (English) names, the Latin font for Persian/Arabic text too (as `format.font`).
 fn apply_font(app: &mut WordApp, d: &Dialog) {
-    let Dialog::Font { start, .. } = d else { return };
+    let Dialog::Font { start, size_cs, .. } = d else { return };
     let mut changed: serde_json::Map<String, Value> = font_props(d).into_iter().filter(|(k, v)| start.get(k) != Some(v)).collect();
     if let Some(f) = changed.get("font").and_then(Value::as_str).map(str::to_string) {
-        let f = app.previews.font_stored(&f);
-        changed.insert("font".into(), json!(f));
-        changed.insert("fontCs".into(), json!(f));
+        // The Latin box sets the Latin font alone: the Complex Script box has its own face (#19).
+        changed.insert("font".into(), json!(app.previews.font_stored(&f)));
     }
     if let Some(f) = changed.get("fontEa").and_then(Value::as_str).map(str::to_string) {
         changed.insert("fontEa".into(), json!(app.previews.font_stored(&f)));
+    }
+    if let Some(f) = changed.get("fontCs").and_then(Value::as_str).map(str::to_string) {
+        changed.insert("fontCs".into(), json!(app.previews.font_stored(&f)));
+    }
+    // `format.set` mirrors a size into the complex-script size. Pin the dialog's own complex
+    // size whenever the Latin size changes, so the Complex Script size stays as the user left it.
+    if changed.contains_key("size") && !changed.contains_key("sizeCs") {
+        let keep = size_cs.trim().parse::<f64>();
+        if let Ok(size_cs) = keep {
+            changed.insert("sizeCs".into(), json!(size_cs));
+        }
     }
     if !changed.is_empty() {
         let _ = app.run("format.set", json!({"props": changed}));
@@ -1562,7 +1631,29 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             false
         }
 
-        Dialog::Font { font, font_ea, asian, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing, .. } => {
+        Dialog::Font {
+            font,
+            font_ea,
+            font_cs,
+            size_cs,
+            complex,
+            complex_missing,
+            missing_families,
+            asian,
+            size,
+            bold,
+            italic,
+            underline,
+            strike,
+            sup,
+            sub,
+            small_caps,
+            caps,
+            hidden,
+            color,
+            spacing,
+            ..
+        } => {
             // Build the sample text format for the preview pane below.
             let preview_size = size.trim().parse::<f32>().unwrap_or(12.0).clamp(6.0, 72.0);
             let preview_color = wordcraft_doc::Rgb::parse(color).map(crate::theme::c32).unwrap_or_else(|| ui.visuals().text_color());
@@ -1613,6 +1704,23 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                     }
                 }
                 ui.end_row();
+                if *complex {
+                    ui.label(tl!("Complex script font:"));
+                    let fams = app.previews.families();
+                    if let Some(f) = crate::widgets::font_combo(ui, "fontdlg_cs", 220.0, font_cs, &fams, Some(&*prev)) {
+                        if f == crate::widgets::ADD_FONT {
+                            let _ = app.run("font.add", json!({}));
+                        } else if f == crate::widgets::LOAD_SYSTEM_FONTS {
+                            let _ = app.run("font.loadSystem", json!({}));
+                        } else {
+                            *font_cs = f;
+                        }
+                    }
+                    ui.end_row();
+                    ui.label(tl!("Complex script size:"));
+                    ui.text_edit_singleline(size_cs);
+                    ui.end_row();
+                }
                 ui.label(tl!("Size:"));
                 ui.text_edit_singleline(size);
                 ui.end_row();
@@ -1624,6 +1732,31 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
                 ui.add(egui::DragValue::new(spacing).speed(0.1).range(-20.0..=20.0));
                 ui.end_row();
             });
+            // No installed face draws the selection's Thai (or other complex-script) text: say so
+            // and offer the two remedies, instead of leaving silent boxes (#19).
+            if *complex && *complex_missing {
+                ui.separator();
+                ui.colored_label(ui.visuals().error_fg_color, tl!("This text is in a script no installed font can draw: it shows as boxes."));
+                ui.horizontal(|ui| {
+                    if ui.button(tl!("Add Font…")).clicked() {
+                        let _ = app.run("font.add", json!({}));
+                    }
+                    if ui.button(tl!("Load System Installed Fonts…")).clicked() {
+                        let _ = app.run("font.loadSystem", json!({}));
+                    }
+                });
+            }
+            // Document-used families that are not installed, so the user can add them.
+            if !missing_families.is_empty() {
+                ui.separator();
+                ui.label(egui::RichText::new(tl!("Document fonts not installed:")).small().weak());
+                // Each family its own label: they are document-supplied names, not interface text.
+                ui.horizontal_wrapped(|ui| {
+                    for family in missing_families.iter().take(20) {
+                        ui.label(family);
+                    }
+                });
+            }
             ui.separator();
             ui.label(egui::RichText::new(tl!("Effects")).font(semibold(12.5)));
             egui::Grid::new("fx").num_columns(2).show(ui, |ui| {
@@ -1649,6 +1782,21 @@ fn body(app: &mut WordApp, ui: &mut Ui, d: &mut Dialog) -> bool {
             let mut job = egui::text::LayoutJob::single_section(sample, fmt);
             job.wrap.max_width = ui.available_width().min(400.0);
             ui.label(job);
+            // The Complex Script box previews the chosen face with Thai sample text (#19).
+            if *complex {
+                let cs_size = size_cs.trim().parse::<f32>().unwrap_or(preview_size).clamp(6.0, 72.0);
+                ui.label(egui::RichText::new(tl!("Complex script preview")).small().weak());
+                let ppp = ui.ctx().pixels_per_point();
+                let sample = "ภาษาไทย";
+                let key = format!("csfont:{}:{cs_size}:{ppp}", font_cs);
+                let tex = app.previews.get_or(ui.ctx(), &key, || Some(crate::previews::font_sample_image(font_cs, sample, cs_size, ppp)));
+                if let Some(h) = tex {
+                    let sz = h.size_vec2() / ppp;
+                    let (r, _) = ui.allocate_exact_size(sz, Sense::hover());
+                    let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+                    ui.painter().image(h.id(), r, uv, Tokens::get(ui.ctx()).text);
+                }
+            }
             let (ok, cancel) = buttons(ui, tl!("OK"));
             if ok {
                 apply_font(app, d);
@@ -4135,6 +4283,34 @@ mod tests {
             }
         });
         assert_eq!(props(&app).line_spacing, Some(LineSpacing::Multiple(1.5)));
+    }
+
+    #[test]
+    fn font_dialog_sets_the_complex_script_font_without_touching_latin() {
+        // #19: Thai text shows the Complex Script box; its face and size are independent of the
+        // Latin ones, and the dialog lists document fonts that are not installed.
+        let mut app = app_with("ภาษาไทย");
+        let _ = app.run("select.all", json!({}));
+        let _ = app.run("format.font", json!({"name": "No Such Family 19"}));
+        let latin = app.session.doc.para_at(&Pos::body(0, 0)).map(|p| p.props_of_char(0).font.clone()).unwrap_or_default();
+        let Some(mut d) = Dialog::open("font", &mut app) else { panic!("no font dialog") };
+        let Dialog::Font { complex, font_cs, font, size_cs, missing_families, .. } = &mut d else { panic!() };
+        assert!(*complex, "Thai text shows the complex-script box");
+        assert_eq!(Some(font.as_str()), latin.as_deref(), "the Latin box shows the Latin face");
+        assert!(missing_families.iter().any(|f| f == "No Such Family 19"), "{missing_families:?}");
+        *font_cs = "Noto Sans Thai".into();
+        *size_cs = "18".into();
+        apply_font(&mut app, &d);
+        let c = app.session.doc.para_at(&Pos::body(0, 0)).map(|p| p.props_of_char(0).clone()).unwrap_or_default();
+        assert_eq!((c.font.clone(), c.font_cs, c.size_cs), (latin, Some("Noto Sans Thai".into()), Some(18.0)));
+        // The state exposes the complex-script font and size.
+        let st = app.run("format.state", json!({})).unwrap();
+        assert_eq!((st["fontCs"].as_str(), st["sizeCs"].as_f64()), (Some("Noto Sans Thai"), Some(18.0)));
+        // A Latin-only selection has no complex-script box.
+        let mut app = app_with("Plain English");
+        let _ = app.run("select.all", json!({}));
+        let Some(d) = Dialog::open("font", &mut app) else { panic!("no font dialog") };
+        assert!(matches!(d, Dialog::Font { complex: false, .. }));
     }
 
     #[test]

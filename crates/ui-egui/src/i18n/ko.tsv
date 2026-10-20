@@ -2512,3 +2512,9 @@ preview	Title	제목
 	All Fonts	모든 글꼴
 	Spike	스파이크
 	Insert Spike	스파이크 삽입
+	Font Diagnostics	글꼴 진단
+	Complex script font:	복합 스크립트 글꼴:
+	Complex script size:	복합 스크립트 크기:
+	Complex script preview	복합 스크립트 미리 보기
+	This text is in a script no installed font can draw: it shows as boxes.	이 텍스트는 설치된 어떤 글꼴로도 그릴 수 없는 문자 체계입니다. 네모 상자로 표시됩니다.
+	Document fonts not installed:	문서에서 사용하지만 설치되지 않은 글꼴:

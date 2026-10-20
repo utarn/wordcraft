@@ -2667,3 +2667,9 @@ preview	Title	Esempio
 	All Fonts	Tutti i caratteri
 	Spike	Raccoglitore
 	Insert Spike	Inserisci raccoglitore
+	Font Diagnostics	Diagnostica dei caratteri
+	Complex script font:	Carattere per scritture complesse:
+	Complex script size:	Dimensione per scritture complesse:
+	Complex script preview	Anteprima delle scritture complesse
+	This text is in a script no installed font can draw: it shows as boxes.	Questo testo è in una scrittura che nessun carattere installato può disegnare: viene mostrato come quadratini.
+	Document fonts not installed:	Caratteri del documento non installati:

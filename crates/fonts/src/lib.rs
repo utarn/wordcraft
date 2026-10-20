@@ -17,12 +17,12 @@ pub mod word;
 
 pub use fontdb::{
     FALLBACK_FAMILY, FONT_FILE_EXTS, FaceRef, FontDb, FontFace, FontFormat, Installed, LocalName, MAX_FONT_FILE_BYTES, UserFont, UserFontError,
-    base_style, bundled, decode_font_file, is_font_file_name, name_language_matches, sniff, system_font_dirs,
+    base_style, bundled, decode_font_file, is_font_file_name, name_language_matches, snap_font_dirs, sniff, system_font_dirs, unix_font_dirs,
 };
 pub use harfrust::Feature;
 use harfrust::{Direction, ShapeOptions, Tag, UnicodeBuffer};
 pub use kurbo::BezPath;
-pub use script::{fallback_rank, needs_layout_tables, script_fallbacks};
+pub use script::{MAX_DIAGNOSTIC_CHARS, fallback_rank, needs_layout_tables, script_fallbacks, uncovered_complex};
 use skrifa::MetadataProvider;
 use skrifa::instance::Size;
 pub use ui_fallback::{SystemUiFont, is_cjk, system_cjk_ui_font, system_cjk_ui_font_for, ui_needs_system_cjk, ui_uncovered_cjk};

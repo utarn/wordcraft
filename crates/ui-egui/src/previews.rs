@@ -408,6 +408,21 @@ pub fn font_entry_image(name: &str, ppp: f32) -> egui::ColorImage {
     egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.to_straight())
 }
 
+/// A sample of `text` in `family`'s own face, as an ink mask: the Font dialog's Complex Script
+/// preview shows the actual chosen face with Thai sample text (#19). An unknown family uses the
+/// default face; a chosen face that lacks a character shows the boxes it would print.
+pub fn font_sample_image(family: &str, text: &str, size: f32, ppp: f32) -> egui::ColorImage {
+    let db = wordcraft_fonts::FontDb::global();
+    let face = db.preview_face(family).unwrap_or_else(|| db.face(wordcraft_fonts::FALLBACK_FAMILY, "Regular"));
+    let chars = text.chars().count().min(80) as f32;
+    let w = (size * 0.7 * chars + 12.0).clamp(48.0, 400.0);
+    let h = (size * 1.7).clamp(16.0, 96.0);
+    let img = wordcraft_render::render_text_line(&face, text, size, w, h, 4.0, ppp);
+    let mut img = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.to_straight());
+    ink_mask(&mut img);
+    img
+}
+
 /// Lay out `para` (with `base`'s styles) in a `w`×`h` pt box and rasterise it.
 pub fn snippet(base: &Document, para: Paragraph, w: f32, h: f32, ppp: f32, margin: f32) -> Option<egui::ColorImage> {
     snippet_blocks(base, vec![Block::Para(para)], w, h, ppp, margin, None, false)

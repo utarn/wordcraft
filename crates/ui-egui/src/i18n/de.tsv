@@ -2258,3 +2258,9 @@
 	All Fonts	Alle Schriftarten
 	Spike	Sammlung
 	Insert Spike	Sammlung einfügen
+	Font Diagnostics	Schriftartdiagnose
+	Complex script font:	Schriftart für komplexe Schriftsysteme:
+	Complex script size:	Größe für komplexe Schriftsysteme:
+	Complex script preview	Vorschau komplexer Schriftsysteme
+	This text is in a script no installed font can draw: it shows as boxes.	Dieser Text ist in einer Schrift, die keine installierte Schriftart darstellen kann: Er wird als Kästchen angezeigt.
+	Document fonts not installed:	Nicht installierte Dokumentenschriftarten:

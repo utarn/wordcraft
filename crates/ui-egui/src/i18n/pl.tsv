@@ -2663,3 +2663,9 @@ preview	Title	Tytuł
 	All Fonts	Wszystkie czcionki
 	Spike	Zbieracz
 	Insert Spike	Wstaw ze zbieracza
+	Font Diagnostics	Diagnostyka czcionek
+	Complex script font:	Czcionka pism złożonych:
+	Complex script size:	Rozmiar pism złożonych:
+	Complex script preview	Podgląd pism złożonych
+	This text is in a script no installed font can draw: it shows as boxes.	Ten tekst jest w piśmie, którego żadna zainstalowana czcionka nie potrafi narysować: wyświetla się jako kwadraty.
+	Document fonts not installed:	Czcionki dokumentu, których nie zainstalowano:

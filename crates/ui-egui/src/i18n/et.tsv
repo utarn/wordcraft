@@ -2293,3 +2293,9 @@
 	All Fonts	Kõik fondid
 	Spike	Koguja
 	Insert Spike	Lisa kogujast
+	Font Diagnostics	Fondi diagnoos
+	Complex script font:	Keerukate kirjasüsteemide font:
+	Complex script size:	Keerukate kirjasüsteemide suurus:
+	Complex script preview	Keerukate kirjasüsteemide eelvaade
+	This text is in a script no installed font can draw: it shows as boxes.	See tekst on kirjas, mida ükski paigaldatud font ei suuda joonistada: see kuvatakse ruutudena.
+	Document fonts not installed:	Dokumendis kasutatud paigaldamata fondid:

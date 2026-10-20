@@ -2654,3 +2654,9 @@
 	All Fonts	Összes betűtípus
 	Spike	Gyűjtő
 	Insert Spike	Beszúrás a gyűjtőből
+	Font Diagnostics	Betűtípus-diagnosztika
+	Complex script font:	Összetett írásmódok betűtípusa:
+	Complex script size:	Összetett írásmódok mérete:
+	Complex script preview	Összetett írásmódok előnézete
+	This text is in a script no installed font can draw: it shows as boxes.	Ez a szöveg olyan írásmódban van, amelyet egyetlen telepített betűtípus sem tud kirajzolni: négyzetekként jelenik meg.
+	Document fonts not installed:	A dokumentumban használt, nem telepített betűtípusok:

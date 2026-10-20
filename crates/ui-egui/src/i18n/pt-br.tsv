@@ -2271,3 +2271,9 @@
 	All Fonts	Todas as fontes
 	Spike	Coletor
 	Insert Spike	Inserir coletor
+	Font Diagnostics	Diagnóstico de fontes
+	Complex script font:	Fonte para escritas complexas:
+	Complex script size:	Tamanho para escritas complexas:
+	Complex script preview	Pré-visualização de escritas complexas
+	This text is in a script no installed font can draw: it shows as boxes.	Este texto está em uma escrita que nenhuma fonte instalada consegue desenhar: ele aparece como quadrados.
+	Document fonts not installed:	Fontes do documento não instaladas:

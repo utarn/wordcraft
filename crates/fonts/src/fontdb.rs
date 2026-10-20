@@ -164,6 +164,11 @@ impl FontFace {
     pub fn is_variable(&self) -> bool {
         !self.coords.is_empty()
     }
+    /// Is this a placeholder face (`.LastResort`) that draws a box for every character nothing
+    /// else covers? Such a face "covers" nothing, though its cmap maps almost everything.
+    pub fn is_placeholder(&self) -> bool {
+        self.family.trim_start_matches('.').eq_ignore_ascii_case("lastresort")
+    }
     /// Face index within the font file (collections); 0 for plain fonts.
     pub fn index(&self) -> u32 {
         self.index
@@ -675,7 +680,13 @@ fn file_face_names(path: &std::path::Path) -> Vec<Found> {
     /// Caps on what a (possibly damaged) file can make the scan read.
     const MAX_FACES: u32 = 256;
     const MAX_TABLE: u32 = 1 << 20;
-    let Ok(mut file) = std::fs::File::open(path) else { return vec![] };
+    let mut file = match std::fs::File::open(path) {
+        Ok(f) => f,
+        Err(e) => {
+            log::warn!("cannot read font file {}: {e}", path.display());
+            return vec![];
+        }
+    };
     let mut read_at = |offset: u64, len: usize| -> Option<Vec<u8>> {
         let mut buf = vec![0; len];
         file.seek(SeekFrom::Start(offset)).ok()?;
@@ -683,7 +694,10 @@ fn file_face_names(path: &std::path::Path) -> Vec<Found> {
         Some(buf)
     };
     let be32 = |b: &[u8], at: usize| b.get(at..at + 4).and_then(|s| s.try_into().ok()).map(u32::from_be_bytes);
-    let Some(head) = read_at(0, 12) else { return vec![] };
+    let Some(head) = read_at(0, 12) else {
+        log::warn!("cannot read the header of font file {}", path.display());
+        return vec![];
+    };
     // A collection lists where each face's table directory starts.
     let starts: Vec<u32> = if head.starts_with(b"ttcf") {
         let n = be32(&head, 8).unwrap_or(0).min(MAX_FACES) as usize;
@@ -742,6 +756,105 @@ fn mini_font(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
     font
 }
 
+/// The Unix font folders: the standard system and BSD local prefixes, X11 font directories, Nix
+/// profiles, the XDG data directories and their Flatpak and Snap exports, and the user's font
+/// folders. The values are injected (tests pass synthetic ones) and need not exist: the scan logs
+/// a missing folder at debug and an unreadable one at warning.
+pub fn unix_font_dirs(data_home: Option<&std::path::Path>, data_dirs: Option<&str>, home: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    // A relative home would scan the working folder; the XDG spec ignores it too.
+    let home = home.filter(|h| h.is_absolute());
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let mut push = |p: PathBuf| {
+        if !p.as_os_str().is_empty() && !dirs.contains(&p) {
+            dirs.push(p);
+        }
+    };
+    // The system folders and the BSD local prefix, then the X11 directories (Linux and BSD).
+    for d in [
+        "/usr/share/fonts",
+        "/usr/local/share/fonts",
+        "/usr/local/share/fonts/X11",
+        "/usr/local/lib/X11/fonts",
+        "/usr/lib/X11/fonts",
+        "/usr/X11R6/lib/X11/fonts",
+        "/usr/X11R7/lib/X11/fonts",
+        "/usr/share/fonts/X11",
+        "/usr/local/lib/fonts",
+        "/usr/pkg/share/fonts",
+        "/usr/pkg/lib/X11/fonts",
+    ] {
+        push(PathBuf::from(d));
+    }
+    // System-wide Flatpak, Snap and Nix profile exports.
+    for d in [
+        "/var/lib/flatpak/exports/share/fonts",
+        "/var/lib/snapd/desktop/fonts",
+        "/nix/var/nix/profiles/default/share/fonts",
+        "/run/current-system/sw/share/fonts",
+    ] {
+        push(PathBuf::from(d));
+    }
+    // XDG says a relative or empty value is ignored; honouring it would scan the working folder.
+    let data_home: Option<PathBuf> = data_home
+        .filter(|p| p.is_absolute())
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| home.filter(|h| h.is_absolute()).map(|h| h.join(".local/share")));
+    if let Some(h) = home {
+        for rel in [".fonts", ".nix-profile/share/fonts", ".local/state/nix/profiles/profile/share/fonts"] {
+            push(h.join(rel));
+        }
+    }
+    let xdg: Vec<PathBuf> = match data_dirs {
+        Some(s) => s.split(':').filter(|d| !d.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()).collect(),
+        None => vec![PathBuf::from("/usr/local/share"), PathBuf::from("/usr/share")],
+    };
+    if let Some(d) = &data_home {
+        push(d.join("fonts"));
+        push(d.join("flatpak/exports/share/fonts"));
+    }
+    for d in xdg {
+        push(d.join("fonts"));
+        push(d.join("flatpak/exports/share/fonts"));
+        push(d.join("snapd/desktop/fonts"));
+    }
+    dirs
+}
+
+/// The fonts Snap packages export under `root` (`/snap` or `~/snap`): each package's
+/// `current/usr/share/fonts` and `current/.local/share/fonts`. A missing or unreadable root
+/// yields no folders; the package count is capped.
+pub fn snap_font_dirs(root: &std::path::Path) -> Vec<std::path::PathBuf> {
+    const MAX_PACKAGES: usize = 256;
+    let entries = match std::fs::read_dir(root) {
+        Ok(e) => e,
+        Err(e) => {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::warn!("cannot read Snap folder {}: {e}", root.display());
+            }
+            return Vec::new();
+        }
+    };
+    let mut dirs = Vec::new();
+    for e in entries.take(MAX_PACKAGES) {
+        let e = match e {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!("cannot read an entry in Snap folder {}: {e}", root.display());
+                continue;
+            }
+        };
+        let p = e.path();
+        for rel in ["current/usr/share/fonts", "current/.local/share/fonts"] {
+            let d = p.join(rel);
+            if d.is_dir() {
+                dirs.push(d);
+            }
+        }
+    }
+    dirs
+}
+
 /// The platform's font folders (the system's and the user's), scanned by [`FontDb::global`].
 /// Empty on wasm.
 pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
@@ -758,8 +871,23 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         // Fonts macOS ships as assets (PingFang, Yu Mincho, …): com_apple_MobileAsset_Font<N>
         // (`Assets` before macOS 11, `AssetsV2` since).
         for parent in ["/System/Library/AssetsV2", "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs", "/System/Library/Assets"] {
-            let Ok(entries) = std::fs::read_dir(parent) else { continue };
-            for e in entries.flatten() {
+            let entries = match std::fs::read_dir(parent) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("cannot read macOS font asset folder {parent}: {e}");
+                    }
+                    continue;
+                }
+            };
+            for e in entries {
+                let e = match e {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("cannot read an entry in macOS font asset folder {parent}: {e}");
+                        continue;
+                    }
+                };
                 if e.file_name().to_string_lossy().starts_with("com_apple_MobileAsset_Font") {
                     dirs.push(e.path());
                 }
@@ -772,11 +900,16 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
             dirs.push(std::path::PathBuf::from(l).join("Microsoft\\Windows\\Fonts"));
         }
     } else {
-        dirs.extend(["/usr/share/fonts", "/usr/local/share/fonts"].map(Into::into));
+        let data_home = std::env::var_os("XDG_DATA_HOME").map(std::path::PathBuf::from);
+        let data_dirs = std::env::var("XDG_DATA_DIRS").ok();
+        dirs.extend(unix_font_dirs(data_home.as_deref(), data_dirs.as_deref(), home.as_deref()));
+        // Snap packages each carry their own font folders.
+        dirs.extend(snap_font_dirs(std::path::Path::new("/snap")));
         if let Some(h) = &home {
-            dirs.push(h.join(".fonts"));
-            dirs.push(h.join(".local/share/fonts"));
+            dirs.extend(snap_font_dirs(&h.join("snap")));
         }
+        let mut seen = std::collections::HashSet::new();
+        dirs.retain(|d| seen.insert(d.clone()));
     }
     dirs
 }
@@ -1179,16 +1312,44 @@ impl FontDb {
 
     #[cfg(not(target_arch = "wasm32"))]
     fn scan_font_dirs(&self) -> usize {
+        // Bounds on a hostile font tree: directories visited and font files parsed. What is
+        // skipped is logged, so a font in a folder past the cap is never dropped silently.
+        const MAX_DIRS: usize = 4096;
+        const MAX_FILES: usize = 100_000;
         let mut found = Vec::new();
         let mut stack = self.font_dirs.clone();
         // Each folder once, however links lead back to it.
         let mut visited = std::collections::HashSet::new();
-        while let Some(d) = stack.pop() {
+        let mut dirs = 0usize;
+        let mut files = 0usize;
+        'scan: while let Some(d) = stack.pop() {
             if !visited.insert(std::fs::canonicalize(&d).unwrap_or_else(|_| d.clone())) {
                 continue;
             }
-            let Ok(rd) = std::fs::read_dir(&d) else { continue };
-            for e in rd.flatten() {
+            dirs += 1;
+            if dirs > MAX_DIRS {
+                log::warn!("font scan stopped after {MAX_DIRS} directories; {} not visited", stack.len().saturating_add(1));
+                break;
+            }
+            let rd = match std::fs::read_dir(&d) {
+                Ok(rd) => rd,
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::NotFound {
+                        log::debug!("font directory {} does not exist", d.display());
+                    } else {
+                        log::warn!("cannot read font directory {}: {e}", d.display());
+                    }
+                    continue;
+                }
+            };
+            for e in rd {
+                let e = match e {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("cannot read an entry in font directory {}: {e}", d.display());
+                        continue;
+                    }
+                };
                 let p = e.path();
                 if p.is_dir() {
                     stack.push(p);
@@ -1198,7 +1359,16 @@ impl FontDb {
                 if !matches!(ext.as_deref(), Some("ttf" | "otf" | "ttc" | "otc")) {
                     continue;
                 }
-                for f in file_face_names(&p) {
+                files += 1;
+                if files > MAX_FILES {
+                    log::warn!("font scan stopped after {MAX_FILES} font files; the rest were not read");
+                    break 'scan;
+                }
+                let faces = file_face_names(&p);
+                if faces.is_empty() {
+                    log::warn!("no readable font faces in {}", p.display());
+                }
+                for f in faces {
                     found.push(CatalogEntry {
                         family: f.family,
                         style: f.style,
@@ -1244,7 +1414,17 @@ impl FontDb {
             p.dedup();
             p
         };
-        let files = paths.iter().filter_map(|p| std::fs::read(p).ok()).collect();
+        // A file too large to load is skipped with a warning rather than read into memory.
+        let files: Vec<Vec<u8>> = paths
+            .iter()
+            .filter_map(|p| match read_fallback_file(p) {
+                Some(data) => Some(data),
+                None => {
+                    log::warn!("font file {} is too large or unreadable; {} is not loaded", p.display(), family);
+                    None
+                }
+            })
+            .collect();
         self.add_fonts(files) > 0
     }
 

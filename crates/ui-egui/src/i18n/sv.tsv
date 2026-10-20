@@ -2673,3 +2673,9 @@ preview	Title	Titel
 	Moved to:	Flyttat till:
 	Spike	Samlare
 	Insert Spike	Infoga samlare
+	Font Diagnostics	Teckensnittsdiagnostik
+	Complex script font:	Teckensnitt för komplexa skriftsystem:
+	Complex script size:	Storlek för komplexa skriftsystem:
+	Complex script preview	Förhandsgranskning av komplexa skriftsystem
+	This text is in a script no installed font can draw: it shows as boxes.	Den här texten är i ett skriftsystem som inget installerat teckensnitt kan rita: den visas som rutor.
+	Document fonts not installed:	Dokumentets teckensnitt som inte är installerade:
