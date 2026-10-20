@@ -453,10 +453,10 @@ Ranked, to beta (detail and remaining milestones in [docs/roadmap.md](docs/roadm
 
 | Date | Change | Summary |
 |---|---|---|
-| 2026-10-19 | trivial | Progress log: Word-compatible Thai Distributed line distribution (#16) |
 | 2026-10-20 | trivial | Progress log: Thai proofing uses an installed Hunspell th_TH dictionary, TIS-620 decoded, before the bundled CC0 list (#21) |
 | 2026-10-19 | trivial | Progress log: Thai proofing from the bundled CC0 PyThaiNLP word list (#17) |
 | 2026-10-19 | trivial | Progress log: run-scoped Thai fallback, complex-script and theme fonts (#18) |
+| 2026-10-19 | trivial | Progress log: Word-compatible Thai Distributed line distribution (#16) |
 | 2026-10-18 | trivial | Progress log: one ordered per-platform Thai font substitution policy (#15) |
 | 2026-10-16 | trivial | Progress log: the Spike |
 | 2026-10-16 | trivial | Progress log: `w:eastAsianLayout` kept on save |
