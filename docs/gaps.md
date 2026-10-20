@@ -1,6 +1,6 @@
 # Where WordCraft falls short of Word
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** trivial (#20: Noto Sans Thai OFL-1.1 is bundled through craft-fonts and embedded in web and minimal builds as the last-resort Thai face — installed faces always win, and Thai text no longer draws as boxes with no system Thai font; previously trivial: #19: font discovery across XDG, Flatpak, Snap, Nix, X11 and BSD folders with logged failures, a no-covering-face diagnostic, the Complex Script font box and PDF export's box report; previously trivial: Thai proofing: an installed Hunspell `th_TH` pair read at runtime — user folder first, then system, TIS-620 decoded — ahead of the bundled CC0 PyThaiNLP list, #21; run-scoped per-script Thai fallback and theme complex-script/Thai typeface round-trip, #18; previously trivial: Thai proofing: spelling from the bundled CC0 PyThaiNLP word list, #17; previously trivial: automatic Asian/Latin and Asian/number spacing laid out, #2358; previously trivial: hint-reliant CJK outlines; previously trivial: numbered headings, #1793; previously trivial: legacy outline, shadow, emboss and imprint text effects drawn, #2534; previously trivial: #8 narrowed: Indonesian proofing from the installed Hunspell dictionary, #498; previously trivial: glossary/building blocks closed; previously trivial: Split Cells and Convert Text to Table follow the Word check, #2592; previously trivial: Language dialog keeps inherited proofing language and no-proof choices (#2717); previously trivial: #29: a copied equation also goes in the MathML clipboard formats, #1297; previously trivial: #24: the Spike, Ctrl+F3 and Ctrl+Shift+F3; previously trivial: VML freeforms read and kept on save; previously trivial: consistent preferred cell widths; previously trivial: multi-paragraph field instructions no longer add blank lines; previously trivial: page-break-only list paragraphs hide their labels; previously trivial: floating-table overlap ignores empty line-break lines; previously trivial: copies keep their formatting on the clipboard as HTML, #1523; previously trivial: sample-text formulas on Enter, #1067; previously trivial: #29: copied equations as MathML, OMML open as #1297, #816; previously trivial: the Font list no longer keeps every previewed font in memory, #848; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: first version; every known shortfall from the 2026-10-10 re-measure, ranked) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** trivial (#22: the Thai effort's closed gaps (#14–#21) are recorded together with the gaps that remain — no Word side-by-side (Word is not available on the Linux host), and the Windows/macOS/browser checklist unrun — plus the headless Linux measurements; previously trivial: #20 bundled Noto Sans Thai OFL-1.1 through craft-fonts for web and minimal builds as the last-resort Thai face, so installed faces always win and Thai text no longer draws as boxes with no system Thai font; previously trivial: #19 font discovery across XDG, Flatpak, Snap, Nix, X11 and BSD folders with logged failures, a no-covering-face diagnostic, the Complex Script font box and PDF export's box report; previously trivial: Thai proofing: an installed Hunspell `th_TH` pair read at runtime — user folder first, then system, TIS-620 decoded — ahead of the bundled CC0 PyThaiNLP list, #21; run-scoped per-script Thai fallback and theme complex-script/Thai typeface round-trip, #18; previously trivial: Thai proofing: spelling from the bundled CC0 PyThaiNLP word list, #17; previously trivial: automatic Asian/Latin and Asian/number spacing laid out, #2358; previously trivial: hint-reliant CJK outlines; previously trivial: numbered headings, #1793; previously trivial: legacy outline, shadow, emboss and imprint text effects drawn, #2534; previously trivial: #8 narrowed: Indonesian proofing from the installed Hunspell dictionary, #498; previously trivial: glossary/building blocks closed; previously trivial: Split Cells and Convert Text to Table follow the Word check, #2592; previously trivial: Language dialog keeps inherited proofing language and no-proof choices (#2717); previously trivial: #29: a copied equation also goes in the MathML clipboard formats, #1297; previously trivial: #24: the Spike, Ctrl+F3 and Ctrl+Shift+F3; previously trivial: VML freeforms read and kept on save; previously trivial: consistent preferred cell widths; previously trivial: multi-paragraph field instructions no longer add blank lines; previously trivial: page-break-only list paragraphs hide their labels; previously trivial: floating-table overlap ignores empty line-break lines; previously trivial: copies keep their formatting on the clipboard as HTML, #1523; previously trivial: sample-text formulas on Enter, #1067; previously trivial: #29: copied equations as MathML, OMML open as #1297, #816; previously trivial: the Font list no longer keeps every previewed font in memory, #848; previously trivial: table column and row markers on the rulers, #700; previously trivial: table borders and the resize handle drag on the page, #217; previously trivial: formatting revisions landed, #41; previously trivial: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: first version; every known shortfall from the 2026-10-10 re-measure, ranked) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 > **Printing update:** 2026-10-12 · direct desktop printing through craft-print; details below.
 
@@ -58,6 +58,35 @@ Document renaming: desktop renaming requires a filesystem that supports hard lin
 blocking gaps, and closing them lifts file formats, layout, stability and UI enough to take the
 full number from ~60% to ~75%. Everything else is depth on the way to full parity.
 
+### Thai acceptance: what closed, what remains (2026-10-20, #22)
+
+Closed by #14–#21 and recorded in [layout](layout-parity.md), [localization](localization-parity.md)
+and [file-format](file-format-parity.md) parity: Thai dictionary line breaking and typographic
+guards (#14), one ordered per-platform font substitution policy (#15), run-scoped per-script
+fallback with `w:cs`/`w:cstheme`/theme Thai typeface round-trip (#18), Thai Distributed layout
+(#16), Thai proofing over the shared segmenter with an installed `th_TH` Hunspell pair first and
+the bundled CC0 list otherwise (#17, #21), font discovery/diagnostics and the Complex Script font
+box (#19), and the bundled OFL Noto Sans Thai for web and minimal systems (#20). No Thai-specific
+panic path, `unwrap`/`expect`, or unbounded input-derived allocation remains in production code.
+
+Known gaps that this ticket could not close:
+
+- **No Word side-by-side evidence.** This host is Linux and has no Microsoft Word, so the
+  recorded probes (line-break boundaries, Thai Distributed gaps, font substitution, proofing
+  marks) were measured headlessly against WordCraft's layout/proofing seams, not against Word.
+  The measurement methods, platform and pinned results are in the gitignored
+  `plan/word/probes/thai-acceptance-2026-10-20.md`; any Word probe DOCX files and screenshots
+  stay in the gitignored `plan/word/probes/` and `plan/word/screenshots/` and are never committed.
+  A Word comparison on macOS and Windows needs the owner.
+- **Windows/macOS checklist unrun.** Installing TH Sarabun New/PSK and checking substitution,
+  saving/reopening a document with `thaiDistribute` and theme properties, Thai proofing with and
+  without system tools, and a browser check of the web build were not executed here; headless
+  Linux results and their scope are recorded in the same probe file. These are owner/platform
+  validation items, not evidence of failure.
+- **Other scripts of the same families remain.** Khmer and Lao still wrap at spaces only (they
+  need dictionaries), and Thai grammar and Thai hyphenation are out of scope for this effort
+  (spelling only), as recorded in the parity documents.
+
 ## By kind
 
 Sample-text formulas on Enter (#1067) are implemented: `=rand()` and `=lorem()`,
@@ -90,6 +119,7 @@ The Language dialog reads effective character formatting, including document def
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | trivial | #22: Thai acceptance recorded. The closed Thai gaps (#14–#21) are listed with what each delivered, and the remaining gaps are explicit: no Word side-by-side (Word unavailable on this Linux host; headless WordCraft measurements only), the Windows/macOS/browser checklist unrun, Khmer/Lao still space-only, and Thai grammar/hyphenation out of scope. Gap #8 already counts Thai among the ten proofed languages |
 | 2026-10-20 | trivial | #20: Noto Sans Thai (OFL-1.1, `craft-fonts`, variable Regular/Bold) is embedded in web and minimal builds as the last-resort Thai face, so Thai text renders and wraps with no system Thai font; an installed Thai face still wins (the bundled face is deferred behind every installed face). The web font filter also embeds it, and the craft-fonts pin moves to the commit whose manifest carries it. Thai font work is complete; the remaining gaps are the family's other scripts |
 | 2026-10-19 | trivial | #18: a run containing Thai resolves per run, per script (one Thai face for the Thai portion, Latin in its Latin substitute); `w:cs`/`w:szCs` and DOCX `w:cstheme` / `<a:font script="Thai">` are honoured and round-trip. Thai font discovery/diagnostics, the Complex Script font box and the bundled Noto Sans Thai remain open (#19, #20) |
 | 2026-10-20 | trivial | #8 narrowed: Thai proofing uses an installed Hunspell `th_TH` dictionary (user folder, then system, TIS-620 decoded at runtime, sanitized phrases and slash alternatives, `REP` suggestions) ahead of the bundled CC0 list, with reload and caps (#21) |

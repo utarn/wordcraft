@@ -1,6 +1,6 @@
 # WordCraft roadmap: milestones and what's next
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-12 · **Change:** minor (Czech proofing review fixes; previously minor: Portuguese proofing; previously minor: Polish interface and Polish proofing; previously trivial: M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (#22: the Thai effort (#14–#21) is reflected as complete in the milestones — M15 lists all ten proofing languages including Thai, M16 records complex-script and Thai support — with Word/platform acceptance remaining a known gap; previously minor: Czech proofing review fixes; previously minor: Portuguese proofing; previously minor: Polish interface and Polish proofing; previously trivial: M7: formatting revisions landed, #41; previously trivial: M5: Draw Table and Eraser landed, #303; previously minor: beta distance restated: ~15 points, ~150–230 h; previously: alpha gate checked: six core workflows pass; previously major: milestones moved here from ROADMAP.md; Current focus set from the re-measured gaps) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 Forward-looking plan. The summary is [`ROADMAP.md`](../ROADMAP.md); the ranked work list is
 [`gaps.md`](gaps.md); the numbers are in [`target-app-parity.md`](target-app-parity.md). Hours are
@@ -62,8 +62,8 @@ partial rows are fidelity gaps (beta work), not broken workflows. WordCraft stay
 | M12 | Formats breadth (PDF, ODT, RTF, HTML, MD, TXT, LaTeX, `.doc` import) | done (first versions); `.doc` write, encryption, minor formats missing | 60–100 h |
 | M13 | Performance budgets | on track (1.4 ms relayout); large real-world documents unmeasured | 10–20 h |
 | M14 | 1.0 polish, packaging, signing | releases v0.1.0–v0.4.0 published (signed macOS, Windows MSI x64/x86/arm64, Linux, FreeBSD, web) | — |
-| M15 | Localization (12 key languages, RTL interface, proofing languages) | 15 UI languages; English, Polish and Portuguese proofing plus Czech spelling and generic checks (system Hunspell; English hyphenation fallback), a proofing language per run | 70–115 h |
-| M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207) | 30–45 h |
+| M15 | Localization (12 key languages, RTL interface, proofing languages) | 23 UI languages; ten proofing languages — English, Polish, Portuguese, Italian, Croatian, Turkish, Russian, Czech, Indonesian and Thai (Thai spelling from a system `th_TH` Hunspell pair read at runtime or the bundled CC0 PyThaiNLP list over `wordcraft-thai`, no Thai grammar or hyphenation) — with a proofing language per run | 70–115 h |
+| M16 | Right-to-left and East Asian typography | RTL paragraphs done (#207); complex-script shaping, Myanmar line breaking and first-class Thai support (dictionary wrapping, fonts and theme slots, Thai Distributed, proofing) are done (#14–#21); Khmer and Lao lack dictionaries | 30–45 h |
 
 ## Next after beta
 
@@ -74,6 +74,7 @@ languages, screen-reader access, ecosystem decisions (VBA, add-ins, cloud), an i
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | #22: Thai support (#14–#21) recorded as complete in the milestones. M15 now lists all ten proofing languages (including Thai, with the runtime `th_TH`/bundled CC0 order and no Thai grammar or hyphenation) and the 23 interface languages; M16 records complex-script shaping, Myanmar and Thai (dictionary wrapping, per-platform fonts and theme slots, Thai Distributed) as done, with Khmer/Lao dictionaries missing. Word side-by-side and the Windows/macOS/browser checklist remain unrun known gaps |
 | 2026-10-12 | minor | Czech proofing review: short-word splits rank after deletion, NOSUGGEST excludes suggestions while accepting typed forms, affix comments apply only to headers, ratios keep spaces and repeated-word messages use Czech quotes; synthetic engine end-to-end and latency checks |
 | 2026-10-12 | minor | Czech spelling from the installed Hunspell dictionary, runtime-table suggestions and generic checks; Czech interface writes cs-CZ documents; no Czech hyphenation patterns bundled; estimates unchanged |
 | 2026-10-12 | minor | M15: Portuguese proofing (pt-BR spelling from the installed VERO dictionary, suggestions, grammar, hyphenation; Review › Language gains Português (Brasil)) |
