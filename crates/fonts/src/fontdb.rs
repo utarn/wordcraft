@@ -781,6 +781,8 @@ fn mini_font(tables: &[([u8; 4], Vec<u8>)]) -> Vec<u8> {
 /// a missing folder at debug and an unreadable one at warning.
 pub fn unix_font_dirs(data_home: Option<&std::path::Path>, data_dirs: Option<&str>, home: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
+    // A relative home would scan the working folder; the XDG spec ignores it too.
+    let home = home.filter(|h| h.is_absolute());
     let mut dirs: Vec<PathBuf> = Vec::new();
     let mut push = |p: PathBuf| {
         if !p.as_os_str().is_empty() && !dirs.contains(&p) {
@@ -812,14 +814,18 @@ pub fn unix_font_dirs(data_home: Option<&std::path::Path>, data_dirs: Option<&st
     ] {
         push(PathBuf::from(d));
     }
-    let data_home: Option<PathBuf> = data_home.map(std::path::Path::to_path_buf).or_else(|| home.map(|h| h.join(".local/share")));
+    // XDG says a relative or empty value is ignored; honouring it would scan the working folder.
+    let data_home: Option<PathBuf> = data_home
+        .filter(|p| p.is_absolute())
+        .map(std::path::Path::to_path_buf)
+        .or_else(|| home.filter(|h| h.is_absolute()).map(|h| h.join(".local/share")));
     if let Some(h) = home {
         for rel in [".fonts", ".nix-profile/share/fonts", ".local/state/nix/profiles/profile/share/fonts"] {
             push(h.join(rel));
         }
     }
     let xdg: Vec<PathBuf> = match data_dirs {
-        Some(s) => s.split(':').filter(|d| !d.is_empty()).map(PathBuf::from).collect(),
+        Some(s) => s.split(':').filter(|d| !d.is_empty()).map(PathBuf::from).filter(|p| p.is_absolute()).collect(),
         None => vec![PathBuf::from("/usr/local/share"), PathBuf::from("/usr/share")],
     };
     if let Some(d) = &data_home {
@@ -884,8 +890,23 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         // Fonts macOS ships as assets (PingFang, Yu Mincho, …): com_apple_MobileAsset_Font<N>
         // (`Assets` before macOS 11, `AssetsV2` since).
         for parent in ["/System/Library/AssetsV2", "/System/Library/AssetsV2/PreinstalledAssetsV2/InstallWithOs", "/System/Library/Assets"] {
-            let Ok(entries) = std::fs::read_dir(parent) else { continue };
-            for e in entries.flatten() {
+            let entries = match std::fs::read_dir(parent) {
+                Ok(entries) => entries,
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::NotFound {
+                        log::warn!("cannot read macOS font asset folder {parent}: {e}");
+                    }
+                    continue;
+                }
+            };
+            for e in entries {
+                let e = match e {
+                    Ok(e) => e,
+                    Err(e) => {
+                        log::warn!("cannot read an entry in macOS font asset folder {parent}: {e}");
+                        continue;
+                    }
+                };
                 if e.file_name().to_string_lossy().starts_with("com_apple_MobileAsset_Font") {
                     dirs.push(e.path());
                 }
