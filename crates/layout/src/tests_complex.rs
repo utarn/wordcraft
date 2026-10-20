@@ -770,6 +770,18 @@ fn thai_distributed_latin_digit_and_punctuation_runs_are_one_unit() {
             assert!(near(g[k - line.c0], 0.0), "no gap inside Latin, digits or punctuation: {} at {k}", g[k - line.c0]);
         }
     }
+
+    // A Latin token directly against Thai text: one gap before the token, none inside it.
+    let text = format!("ภาษาABC{}", wordcraft_doc::para::LINE_BREAK);
+    let pl = layout_of(&aligned(&text, Align::ThaiDistribute, 300.0));
+    let line = &pl.lines[0];
+    let g = gaps(&pl, line);
+    let per = g[0];
+    assert!(per > 0.0);
+    // ภ า ษ า A B C: a gap before each Thai cluster but the first and before A, none inside ABC.
+    assert_eq!(g.len(), 6, "{g:?}");
+    assert!(g[..4].iter().all(|x| near(*x, per)), "gaps before the Thai clusters and the token: {g:?}");
+    assert!(near(g[4], 0.0) && near(g[5], 0.0), "no gap inside ABC: {g:?}");
 }
 
 #[test]
@@ -894,11 +906,14 @@ fn thai_distributed_one_unit_empty_and_overflowing_lines_do_not_change() {
     let pl = layout_of(&aligned(&text, Align::ThaiDistribute, 200.0));
     let left = layout_of(&aligned(&text, Align::Left, 200.0));
     assert_eq!(pl.lines[0].xs, left.lines[0].xs);
-    // Empty paragraph.
-    let d = aligned("", Align::ThaiDistribute, 200.0);
-    let l = lay(&d);
-    let pl = para_layout(&l, 0);
-    assert!(pl.lines.iter().flat_map(|line| &line.xs).all(|x| x.is_finite()));
+    // Empty paragraph: exactly its Align Left layout.
+    let pl = layout_of(&aligned("", Align::ThaiDistribute, 200.0));
+    let left = layout_of(&aligned("", Align::Left, 200.0));
+    assert_eq!(pl.lines.len(), left.lines.len());
+    for (a, b) in pl.lines.iter().zip(&left.lines) {
+        assert_eq!((a.c0, a.c1, a.end), (b.c0, b.c1, b.end));
+        assert_eq!(a.xs, b.xs);
+    }
     // An unbreakable token wider than the line: negative slack distributes nothing.
     let text = format!("Anextraordinarilylongwordwithoutspaces{}{}", "x".repeat(80), wordcraft_doc::para::LINE_BREAK);
     let pl = layout_of(&aligned(&text, Align::ThaiDistribute, 120.0));
@@ -947,4 +962,67 @@ fn thai_distributed_gaps_survive_bidi_reordering() {
     }
     assert!(near(boxes.first().map_or(0.0, |b| b.0), line.left), "the line still starts at its edge");
     assert!(near(boxes.last().map_or(0.0, |b| b.1), line.right), "and ends at the other");
+}
+
+#[test]
+fn thai_distributed_leaves_a_display_equation_alone() {
+    // A display equation keeps its own justification (MathJc) whatever the paragraph alignment is:
+    // Thai Distributed neither distributes it nor centres a one-equation line as Distributed would.
+    let equation = || InlineObject::Equation {
+        linear: "a=b".into(),
+        display: true,
+        math: wordcraft_doc::math::Math { nodes: wordcraft_doc::math::parse_linear("a=b"), ..Default::default() },
+    };
+    let mut thai = aligned("", Align::ThaiDistribute, 300.0);
+    thai.insert_object(&Pos::body(0, 0), equation(), &Default::default()).unwrap();
+    let mut left = aligned("", Align::Left, 300.0);
+    left.insert_object(&Pos::body(0, 0), equation(), &Default::default()).unwrap();
+    let (a, b) = (layout_of(&thai), layout_of(&left));
+    assert_eq!(a.lines.len(), b.lines.len());
+    for (x, y) in a.lines.iter().zip(&b.lines) {
+        assert_eq!((x.c0, x.c1, x.end), (y.c0, y.c1, y.end));
+        assert_eq!(x.xs, y.xs, "the display-equation line does not move");
+    }
+    assert_eq!(a.maths.len(), b.maths.len());
+    assert!(!a.maths.is_empty(), "the equation is laid out");
+    for ((ci, x), (_, y)) in a.maths.iter().zip(&b.maths) {
+        assert_eq!(*ci, 0);
+        assert!(near(x.width, y.width));
+    }
+}
+
+#[test]
+fn thai_distributed_inline_objects_are_single_units() {
+    // An inline object is one unit: gaps go before and after it, and none inside it. The object
+    // is not stretched.
+    let equation = || InlineObject::Equation {
+        linear: "a=b".into(),
+        display: false,
+        math: wordcraft_doc::math::Math { nodes: wordcraft_doc::math::parse_linear("a=b"), ..Default::default() },
+    };
+    let text = format!("ภาษาไทย{}", wordcraft_doc::para::LINE_BREAK);
+    let with = |align| {
+        let mut d = aligned(&text, align, 320.0);
+        d.insert_object(&Pos::body(0, "ภาษา".len()), equation(), &Default::default()).unwrap();
+        layout_of(&d)
+    };
+    let (pl, left) = (with(Align::ThaiDistribute), with(Align::Left));
+    let line = &pl.lines[0];
+    let object = (line.c0..content_last(&pl, line))
+        .find(|k| matches!(pl.clusters.get(*k).map(|c| c.kind), Some(crate::para::ClKind::Object(_))))
+        .expect("an inline object cluster");
+    let g = gaps(&pl, line);
+    // ไ ท ย ภ า ษ า and the object are eight units, so seven equal gaps.
+    assert_eq!(g.len(), 7, "{g:?}");
+    let per = g[0];
+    assert!(per > 0.0);
+    assert!(g.iter().all(|x| near(*x, per)), "equal gaps, before and after the object too: {g:?}");
+    assert!(near(g[object - line.c0 - 1], per), "a gap before the object");
+    assert!(near(g[object - line.c0], per), "a gap after the object");
+    // The object keeps its own width: the gap widens the line around it, not its content.
+    let left_line = &left.lines[0];
+    let left_object = (left_line.c0..left_line.c1)
+        .find(|k| matches!(left.clusters.get(*k).map(|c| c.kind), Some(crate::para::ClKind::Object(_))))
+        .expect("the same object cluster");
+    assert!(near(pl.clusters[object].adv, left.clusters[left_object].adv), "the object is not stretched");
 }
