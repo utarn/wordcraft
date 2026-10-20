@@ -114,6 +114,10 @@ fn discovery_searches_xdg_flatpak_snap_nix_x11_and_bsd_font_dirs() {
     let defaults = unix_font_dirs(None, None, Some(home));
     assert!(defaults.iter().any(|d| d == Path::new("/usr/local/share/fonts")));
     assert!(defaults.iter().any(|d| d == Path::new("/usr/share/fonts")));
+    // A relative or empty XDG value is ignored, never scanned from the working folder.
+    let hostile = unix_font_dirs(Some(Path::new("relative/share")), Some("relative/share:/usr/share:"), Some(Path::new("relative/home")));
+    assert!(!hostile.iter().any(|d| d.is_relative()), "{hostile:?}");
+    assert!(hostile.iter().any(|d| d == Path::new("/usr/share/fonts")), "absolute entries still count");
 }
 
 #[test]
@@ -129,6 +133,17 @@ fn snap_packages_contribute_their_font_folders() {
     // A missing root is no folders, never a panic.
     assert!(snap_font_dirs(&root.join("missing")).is_empty());
     let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn last_resort_is_a_placeholder_face() {
+    // `.LastResort` draws a box for every character nothing else covers: it must count as no
+    // coverage at all, never as a face that can draw Thai (#19).
+    let dir = font_dir("lastresort");
+    std::fs::write(dir.join("LastResort.ttf"), named_face("SourceSans3-Regular.ttf", ".LastResort")).unwrap();
+    let db = FontDb::with_font_dirs(vec![dir]);
+    assert!(db.face(".LastResort", "Regular").is_placeholder());
+    assert!(!db.face(FAMILY, "Regular").is_placeholder());
 }
 
 #[test]

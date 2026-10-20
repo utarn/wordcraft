@@ -171,18 +171,11 @@ pub fn missing_glyphs(doc: &Document, lay: &DocLayout, opts: &PdfOptions) -> Pdf
     let dopts =
         DisplayOptions { marks: false, dim_header: false, dim_body: false, markup: opts.include_markup, placeholders: false, ..Default::default() };
     let mut found: BTreeMap<String, BTreeSet<char>> = BTreeMap::new();
+    // Exactly the display list the writer draws, so clipped cells and warped text boxes are
+    // included once each, as they appear.
     for page in &lay.pages {
-        for it in page.header.iter().chain(&page.footer).chain(&page.items) {
-            let mut items = vec![it.clone()];
-            // A line clipped to its table cell is drawn together with the cell's other items.
-            if matches!(it, Placed::Lines { .. }) {
-                let clipped = page.header.iter().chain(&page.footer).chain(&page.items).filter(|c| matches!(c, Placed::Cell { clip: true, .. }));
-                items.extend(clipped.cloned());
-            }
-            let one = Page { w: page.w, h: page.h, section: page.section, number: page.number, items, body: page.body, ..Default::default() };
-            for d in page_display(doc, &one, &dopts) {
-                collect_boxed(&d, &mut found);
-            }
+        for d in page_display(doc, page, &dopts) {
+            collect_boxed(&d, &mut found);
         }
     }
     PdfReport { missing_glyphs: found.into_iter().map(|(family, chars)| MissingGlyphs { family, chars: chars.into_iter().collect() }).collect() }
