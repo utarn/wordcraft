@@ -13,7 +13,10 @@ pub mod math;
 mod script;
 pub mod thai;
 mod ui_fallback;
+mod web_fonts;
 pub mod word;
+
+pub use web_fonts::embedded_in_web;
 
 pub use fontdb::{
     FALLBACK_FAMILY, FONT_FILE_EXTS, FaceRef, FontDb, FontFace, FontFormat, Installed, LocalName, MAX_FONT_FILE_BYTES, UserFont, UserFontError,
@@ -73,6 +76,12 @@ pub fn korean_fonts() -> impl Iterator<Item = &'static CraftFont> {
 /// The craft-fonts Georgian (`"Geor"`) Regular face for the interface. Empty without craft-fonts.
 pub fn georgian_fonts() -> impl Iterator<Item = &'static CraftFont> {
     CRAFT_FONTS.iter().filter(|f| f.scripts.contains(&"Geor") && f.style == "Regular")
+}
+
+/// The craft-fonts faces for Thai (`"Thai"`), in manifest order. Noto Sans Thai is a variable
+/// font, so its one manifest row covers Regular and Bold. Empty without craft-fonts.
+pub fn thai_fonts() -> impl Iterator<Item = &'static CraftFont> {
+    CRAFT_FONTS.iter().filter(|f| f.scripts.contains(&"Thai"))
 }
 
 /// The CJK interface faces, Regular styles only (the UI fakes no bold), with the Japanese UI,
@@ -421,6 +430,80 @@ mod tests {
             let fb = db.fallback_for(c, latin.id()).unwrap_or_else(|| panic!("no fallback for {c}"));
             assert_eq!(fb.family, arabic.family, "{c}");
         }
+    }
+
+    #[test]
+    fn craft_fonts_embed_the_last_resort_thai_face() {
+        if CRAFT_FONTS.is_empty() {
+            eprintln!("skipped: built without craft-fonts (set CRAFT_FONTS_DIR to a checkout)");
+            return;
+        }
+        let thai: Vec<_> = thai_fonts().collect();
+        assert_eq!(thai.len(), 1, "one Thai manifest row, the variable font");
+        let cf = thai[0];
+        assert_eq!(cf.family, "Noto Sans Thai");
+        // The web build embeds the same face: a browser has no system Thai font.
+        assert!(embedded_in_web(cf.family, cf.style), "the web font filter includes it");
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        let latin = db.face(DEFAULT_FAMILY, "Regular");
+        // One variable file gives both weights, so the Regular and Bold names resolve to real
+        // faces that draw Thai.
+        for (style, weight) in [("Regular", 400.0), ("Bold", 700.0)] {
+            let face = db.face("Noto Sans Thai", style);
+            assert_eq!(face.family, "Noto Sans Thai");
+            assert!((face.weight - weight).abs() < 1.0, "{style} is {} {}", face.weight, face.style);
+            for ch in "น้ำ ภาษาไทย๑๒๓฿".chars().filter(|c| !c.is_whitespace()) {
+                assert_ne!(face.glyph_for(ch), 0, "{} lacks {ch}", face.style);
+            }
+            let shaped = shape(&face, "น้ำ ภาษาไทย", &[], |c| c);
+            assert!(shaped.iter().all(|g| g.gid != 0), "{} shapes Thai, no boxes", face.style);
+            assert!(shaped.iter().filter(|g| g.x_advance > 0).count() >= 5, "{} has advances", face.style);
+        }
+        // A Latin face that lacks Thai falls back to the bundled face (no system fonts here).
+        let fb = db.fallback_for('\u{0E19}', latin.id()).expect("the bundled Thai face covers Thai");
+        assert_eq!(fb.family, "Noto Sans Thai");
+        assert!(!fb.is_placeholder());
+    }
+
+    /// `data` with `from` replaced by `to` in every name record (both encodings), so a test can
+    /// stand a copy of a face in for an installed font under another family.
+    fn renamed_font(data: &[u8], from: &str, to: &str) -> Vec<u8> {
+        assert_eq!(from.len(), to.len(), "same-length names keep the name table intact");
+        let utf16 = |s: &str| s.encode_utf16().flat_map(u16::to_be_bytes).collect::<Vec<u8>>();
+        let mut data = data.to_vec();
+        for (from, to) in [(utf16(from), utf16(to)), (from.as_bytes().to_vec(), to.as_bytes().to_vec())] {
+            let mut i = 0;
+            while let Some(at) = data[i..].windows(from.len()).position(|w| w == from) {
+                data[i + at..i + at + to.len()].copy_from_slice(&to);
+                i += at + to.len();
+            }
+        }
+        data
+    }
+
+    #[test]
+    fn an_installed_thai_face_wins_over_the_bundled_one() {
+        let Some(cf) = thai_fonts().next() else {
+            eprintln!("skipped: no Thai face in the optional craft-fonts input");
+            return;
+        };
+        let db = FontDb::with_font_dirs(Vec::new());
+        db.set_system_fallback(false);
+        // Minimal system: only the bundled face covers Thai.
+        assert_eq!(db.fallback_for('\u{0E19}', 0).map(|f| f.family.clone()), Some("Noto Sans Thai".to_string()));
+        // An installed Thai face (here a copy of the bundled font under another family) always
+        // wins, even though the ordered policy never names it and the bundled face ranks higher.
+        let installed = renamed_font(cf.bytes, "Noto Sans Thai", "Thai Test Font");
+        assert!(db.add_font(installed) > 0, "the installed face loads");
+        let fb = db.fallback_for('\u{0E19}', 0).expect("a Thai face");
+        assert_eq!(fb.family, "Thai Test Font", "the installed face wins over the bundled one");
+        // The same holds for the one-face-per-run path.
+        let run: Vec<char> = "ภาษาไทย".chars().collect();
+        let rf = db.fallback_for_run(&run, 0, false, false).expect("a face covers the run");
+        assert_eq!(rf.family, "Thai Test Font");
+        // The bundled face was not replaced: it is still there for a system without one.
+        assert!(db.has_family("Noto Sans Thai"));
     }
 
     #[test]

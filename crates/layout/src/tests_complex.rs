@@ -464,6 +464,34 @@ fn thai_without_spaces_wraps_at_dictionary_word_boundaries() {
 }
 
 #[test]
+fn thai_lays_out_in_the_fallback_face_without_boxes_and_still_wraps() {
+    if !thai_font_installed() {
+        eprintln!("skipped: no Thai font installed or bundled");
+        return;
+    }
+    // The default document font (a Latin serif) has no Thai: every Thai character must draw in
+    // one fallback face (the system's Thai face, or the bundled Noto Sans Thai on the web and
+    // minimal systems), never as .notdef boxes, and line breaking must still use the dictionary.
+    let text = THAI_SENTENCE.repeat(8);
+    let mut d = Document::from_text(&text);
+    narrow(&mut d, 200.0);
+    let l = lay(&d);
+    let pl = para_layout(&l, 0);
+    assert!(pl.lines.len() > 4, "a long Thai paragraph wraps: {} lines", pl.lines.len());
+    let is_thai_at = |at: usize| text.get(at..).and_then(|t| t.chars().next()).is_some_and(wordcraft_fonts::thai::is_thai);
+    let faces = cluster_faces_from(&l, 0);
+    let thai: Vec<_> = faces.iter().filter(|(at, _)| is_thai_at(*at)).collect();
+    let face = thai.first().map(|(_, f)| *f).expect("Thai clusters");
+    assert!(thai.iter().all(|(_, f)| f.id() == face.id()), "one Thai face for the paragraph");
+    assert!(face.covers('\u{0E19}') && face.covers('\u{0E33}') && face.covers('\u{0E49}'), "{} draws Thai", face.family);
+    assert!(pl.glyphs.iter().all(|g| g.gid != 0), "no boxes for Thai text");
+    let breaks = wordcraft_thai::breaks(&text);
+    for line in pl.lines.iter().skip(1) {
+        assert!(breaks.contains(&line.start), "line starts at a dictionary word boundary: {}", line.start);
+    }
+}
+
+#[test]
 fn thai_break_guards_hold_in_layout() {
     // Unknown syllables make the dictionary leave boundaries after leading vowels and before
     // marks; the guards must remove them.

@@ -236,13 +236,18 @@ mod tests {
 
     #[test]
     fn uncovered_complex_reports_the_characters_that_would_be_boxes() {
-        // No system fonts and no bundled Thai face: every Thai character is a box, once.
+        // No system fonts: a bundled Thai face (the web/minimal fallback) means no boxes; without
+        // one, every Thai character is a box, once.
         let db = crate::FontDb::with_font_dirs(Vec::new());
         db.set_system_fallback(false);
         let missing = uncovered_complex(&db, "น้ำ น้ำ ABC");
-        assert!(missing.contains(&'\u{0E19}'), "{missing:?}");
-        assert!(missing.contains(&'\u{0E33}'), "SARA AM is complex too: {missing:?}");
-        assert_eq!(missing.len(), missing.iter().collect::<std::collections::HashSet<_>>().len(), "each character once");
+        if crate::thai_fonts().next().is_some() {
+            assert!(missing.is_empty(), "the bundled Thai face covers them: {missing:?}");
+        } else {
+            assert!(missing.contains(&'\u{0E19}'), "{missing:?}");
+            assert!(missing.contains(&'\u{0E33}'), "SARA AM is complex too: {missing:?}");
+            assert_eq!(missing.len(), missing.iter().collect::<std::collections::HashSet<_>>().len(), "each character once");
+        }
         assert!(!missing.iter().any(|c| c.is_ascii()), "Latin text is not a complex-script box");
         // Latin-only text asks for nothing, and hostile text is bounded.
         assert!(uncovered_complex(&db, "Plain Latin 123").is_empty());
