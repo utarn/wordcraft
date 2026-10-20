@@ -567,17 +567,23 @@ mod tests {
 
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
-    fn a_missing_thai_font_with_no_thai_face_degrades_to_the_coverage_search() {
-        // A database without system fonts and without a bundled Thai face: the policy has no
-        // suitable candidate, and resolution falls through the existing coverage search to the
-        // last-resort face instead of failing.
+    fn a_missing_thai_font_without_a_system_face_degrades_to_the_coverage_search() {
+        // A database without system fonts: the policy has no installed candidate, so resolution
+        // falls through the existing coverage search — to the bundled craft-fonts Thai face when
+        // the build has one, otherwise to the last-resort face — instead of failing.
         let db = FontDb::with_font_dirs(Vec::new());
         db.set_system_fallback(false);
+        let bundled = crate::thai_fonts().next().is_some();
         for family in ["TH Sarabun New", "Angsana New", "Cordia New", "BrowalliaUPC"] {
             let r = resolve_in(&db, family, false, false);
             assert!(r.substituted, "{family}");
-            assert_eq!(r.face.family, crate::FALLBACK_FAMILY, "{family}");
-            assert!(!r.face.covers('\u{0E19}'), "no bundled Thai face yet");
+            if bundled {
+                assert_eq!(r.face.family, "Noto Sans Thai", "{family}");
+                assert!(r.face.covers('\u{0E19}'), "the bundled Thai face draws Thai");
+            } else {
+                assert_eq!(r.face.family, crate::FALLBACK_FAMILY, "{family}");
+                assert!(!r.face.covers('\u{0E19}'), "no bundled Thai face");
+            }
         }
         // The same request against the real database still returns a usable face (Thai when the
         // system has one, the last resort otherwise): never an error or a panic.

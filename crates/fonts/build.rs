@@ -1,16 +1,22 @@
 //! Optional craft-fonts build input (https://github.com/storytold/craft-fonts, recipe from its
 //! `docs/integration.md`). With `CRAFT_FONTS_DIR=<checkout>` the fonts in its
 //! `fonts/manifest.txt` are embedded as `CRAFT_FONTS`; unset, `CRAFT_FONTS` is empty. Web
-//! (wasm32) builds embed only the UI face, BIZ UDPGothic Regular, to stay within the web size
-//! budget. With `CRAFT_FONTS_REQUIRED` (releases), a native build also fails when the checkout
-//! has no font for a CJK interface language (Japanese, Simplified Chinese), as an outdated pin
-//! once did (#241). It only reads the local checkout: no network.
+//! (wasm32) builds embed only the faces in [`embedded_in_web`] — the UI face, BIZ UDPGothic
+//! Regular, and the last-resort Thai face, Noto Sans Thai Regular, because a browser has no
+//! system Thai font — to stay within the web size budget. With `CRAFT_FONTS_REQUIRED`
+//! (releases), a native build also fails when the checkout has no font for a CJK interface
+//! language (Japanese, Simplified Chinese) or Thai, as an outdated pin once did (#241). It only
+//! reads the local checkout: no network.
 use std::fmt::Write as _;
 use std::path::PathBuf;
+
+include!("src/web_fonts.rs");
 
 fn main() {
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_DIR");
     println!("cargo::rerun-if-env-changed=CRAFT_FONTS_REQUIRED");
+    // The web font filter is `include!`d, so cargo needs it named explicitly.
+    println!("cargo::rerun-if-changed=src/web_fonts.rs");
     let mut src = String::from("pub static CRAFT_FONTS: &[CraftFont] = &[\n");
     if let Some(dir) = std::env::var_os("CRAFT_FONTS_DIR").map(PathBuf::from) {
         match craft_fonts(&dir) {
@@ -39,8 +45,9 @@ fn main() {
 }
 
 /// Scripts a release build (`CRAFT_FONTS_REQUIRED`, native) must embed a font for: the CJK
-/// interface languages' (Japanese, Simplified Chinese).
-const REQUIRED_SCRIPTS: &[&str] = &["Jpan", "Hans"];
+/// interface languages' (Japanese, Simplified Chinese) and Thai, the web and minimal-system
+/// last-resort face (#20).
+const REQUIRED_SCRIPTS: &[&str] = &["Jpan", "Hans", "Thai"];
 
 /// One `CraftFont { .. }` initialiser per manifest line, and the scripts the embedded fonts cover.
 fn craft_fonts(dir: &std::path::Path) -> Result<(String, Vec<String>), String> {
@@ -55,7 +62,7 @@ fn craft_fonts(dir: &std::path::Path) -> Result<(String, Vec<String>), String> {
         let [family, style, file, scripts, ..] = f.as_slice() else {
             return Err(format!("malformed manifest line: {line}"));
         };
-        if wasm && !(*family == "BIZ UDPGothic" && *style == "Regular") {
+        if wasm && !embedded_in_web(family, style) {
             continue;
         }
         let path = dir.join(file).canonicalize().map_err(|e| format!("{file}: {e}"))?;
