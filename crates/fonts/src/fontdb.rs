@@ -82,6 +82,10 @@ pub struct FontFace {
     pub coords: Vec<([u8; 4], f32)>,
     location: Location,
     pub instance: Option<harfrust::ShaperInstance>,
+    /// A bundled face that is only a last resort: an installed face covering the character always
+    /// wins. The craft-fonts Noto Sans Thai face is one, so a minimal system (or the web) draws
+    /// Thai without hiding a Thai font the machine actually has (#20).
+    pub(crate) deferred: bool,
     /// Basic Multilingual Plane coverage bitset, built on first use.
     bmp: std::sync::OnceLock<Box<[u64]>>,
     // Some legacy CJK fonts assemble their contours with TrueType instructions.
@@ -597,11 +601,12 @@ struct RunFallbackCache {
 const RUN_FALLBACK_CACHE_MAX: usize = 4096;
 const RUN_FALLBACK_CACHE_CHARS: usize = 1 << 20;
 
-/// Loaded faces other than `exclude`, in fallback order: for right-to-left text the fonts made
-/// for the script first (so a word isn't split across fonts, which breaks Arabic joining); for a
-/// complex-script character `complex` (Thai, Myanmar…) faces with OpenType layout tables, the
-/// script's own families first, as the per-character fallback ranks them; then the fallback
-/// family, upright, nearest to regular weight.
+/// Loaded faces other than `exclude`, in fallback order: installed faces before a bundled
+/// last-resort face (so the web/minimal Thai face never hides an installed one); for
+/// right-to-left text the fonts made for the script first (so a word isn't split across fonts,
+/// which breaks Arabic joining); for a complex-script character `complex` (Thai, Myanmar…) faces
+/// with OpenType layout tables, the script's own families first, as the per-character fallback
+/// ranks them; then the fallback family, upright, nearest to regular weight.
 fn fallback_order(faces: &[Arc<FontFace>], exclude: u32, rtl: bool, complex: Option<char>) -> Vec<&Arc<FontFace>> {
     let mut order: Vec<&Arc<FontFace>> = faces.iter().filter(|f| f.id != exclude).collect();
     let rank =
@@ -610,7 +615,9 @@ fn fallback_order(faces: &[Arc<FontFace>], exclude: u32, rtl: bool, complex: Opt
         Some(c) => (!f.has_layout_tables(), crate::fallback_rank(c, &f.family)),
         None => (false, 0),
     };
-    order.sort_by_key(|f| (rank(f), shaping(f), !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
+    order.sort_by_key(|f| {
+        (f.deferred, rank(f), shaping(f), !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32)
+    });
     order
 }
 
@@ -1025,6 +1032,7 @@ fn make_face(bytes: FontBytes, index: u32, family: String, style: String, legacy
         instance,
         bytes,
         index,
+        deferred: false,
         bmp: std::sync::OnceLock::new(),
         outline_hinter: std::sync::OnceLock::new(),
     })
@@ -1068,17 +1076,20 @@ fn style_italic(style: &str) -> bool {
 impl FontDb {
     /// A database holding the bundled fonts, then the craft-fonts Japanese faces (Mincho first,
     /// so they are the fallback for Japanese text after the requested and bundled fonts), then the
-    /// other craft-fonts faces: Simplified Chinese, for the ideographs the Japanese fonts lack, and
-    /// Arabic, so Arabic and Persian text draws without system fonts (#1652) (all empty without
+    /// other craft-fonts faces: Simplified Chinese, for the ideographs the Japanese fonts lack,
+    /// Arabic, so Arabic and Persian text draws without system fonts (#1652), and Noto Sans Thai,
+    /// the last-resort Thai face on the web and minimal systems (#20) (all empty without
     /// `CRAFT_FONTS_DIR`), whose system font scan reads `font_dirs`.
     pub fn with_font_dirs(font_dirs: Vec<std::path::PathBuf>) -> Self {
         let mut faces = Vec::new();
         let others = crate::CRAFT_FONTS.iter().filter(|f| !f.scripts.contains(&"Jpan"));
-        let craft = crate::japanese_document_fonts().into_iter().chain(others).map(|f| f.bytes);
-        for data in BUNDLED.iter().copied().chain(craft) {
+        let craft = crate::japanese_document_fonts().into_iter().chain(others).map(|f| (f.bytes, f.scripts.contains(&"Thai")));
+        let bundled = BUNDLED.iter().copied().map(|b| (b, false));
+        for (data, deferred) in bundled.chain(craft) {
             for f in enumerate_faces(data) {
                 if let Some(mut face) = make_face(FontBytes::Static(data), f.index, f.family, f.style, f.legacy, f.coords) {
                     face.local_names = f.local;
+                    face.deferred = deferred;
                     faces.push(Arc::new(face));
                 }
             }
@@ -1682,7 +1693,9 @@ impl FontDb {
             return (Some(face), self.read_faces().len());
         }
         let (found, n) = self.loaded_fallback(c, exclude);
-        if found.is_some() {
+        // A bundled last-resort face (the web/minimal Thai face) only answers when the system has
+        // nothing better.
+        if found.as_ref().is_some_and(|f| !f.deferred) {
             return (found, n);
         }
         self.system_search(c, exclude)
@@ -1708,23 +1721,25 @@ impl FontDb {
         find()
     }
 
-    /// [`Self::search_fallback`] when no loaded face covers `c`: load a system font that does,
-    /// one search at a time.
+    /// [`Self::search_fallback`] when no loaded face covers `c`, or only a bundled last-resort
+    /// face does: load a system font that covers it, one search at a time.
     #[cfg(not(target_arch = "wasm32"))]
     fn system_search(&self, c: char, exclude: u32) -> (Option<Arc<FontFace>>, usize) {
         let _searching = self.searching.lock().unwrap_or_else(|e| e.into_inner());
         // A search that held the lock first may have loaded a font covering `c`: choose among the
         // loaded faces again before loading more.
         let (found, n) = self.loaded_fallback(c, exclude);
-        if found.is_none() && self.system_fallback(c) {
+        // A bundled last-resort face does not count as an answer while the system may have one.
+        if found.as_ref().is_none_or(|f| f.deferred) && self.system_fallback(c) {
             return self.loaded_fallback(c, exclude);
         }
         (found, n)
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn system_search(&self, _c: char, _exclude: u32) -> (Option<Arc<FontFace>>, usize) {
-        (None, self.read_faces().len())
+    fn system_search(&self, c: char, exclude: u32) -> (Option<Arc<FontFace>>, usize) {
+        // A browser has no system font scan: the bundled last-resort face is the answer.
+        self.loaded_fallback(c, exclude)
     }
 
     /// The best loaded face covering `c`, and the number of loaded faces it was chosen from.
@@ -1744,7 +1759,9 @@ impl FontDb {
         // the script's own families, so syllables reorder and stack (#604).
         let complex = crate::needs_layout_tables(c);
         let shaping = |f: &FontFace| if complex { (!f.has_layout_tables(), crate::fallback_rank(c, &f.family)) } else { (false, 0) };
-        order.sort_by_key(|f| (rank(f), shaping(f), !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32));
+        order.sort_by_key(|f| {
+            (f.deferred, rank(f), shaping(f), !f.family.eq_ignore_ascii_case(FALLBACK_FAMILY), f.italic, (f.weight - 400.0).abs() as i32)
+        });
         (order.into_iter().find(|f| f.covers(c)).cloned(), faces.len())
     }
 
@@ -1796,11 +1813,12 @@ impl FontDb {
         #[cfg_attr(target_arch = "wasm32", allow(unused_mut))]
         let mut base = self.loaded_covering(chars, exclude);
         #[cfg(not(target_arch = "wasm32"))]
-        if base.is_none() {
-            // A character no loaded face covers: load a system font for it, then retry (the run's
-            // other characters may already be covered by loaded faces).
+        if base.as_ref().is_none_or(|f| f.deferred) {
+            // A character no installed face covers: load a system font for it, then retry (the
+            // run's other characters may already be covered by loaded faces). A bundled
+            // last-resort face covering the run is not an answer while the system may have one.
             for c in chars {
-                if self.read_faces().iter().any(|f| f.id != exclude && f.covers(*c)) {
+                if self.read_faces().iter().any(|f| f.id != exclude && !f.deferred && f.covers(*c)) {
                     continue;
                 }
                 if self.system_fallback(*c)
@@ -1852,7 +1870,7 @@ impl FontDb {
                 return false;
             }
         }
-        let covered = |db: &FontDb| db.read_faces().iter().any(|f| f.covers(c));
+        let covered = |db: &FontDb| db.read_faces().iter().any(|f| !f.deferred && f.covers(c));
         let cataloged: Vec<String> = self.read_catalog().iter().map(|e| e.family.clone()).collect();
         let rtl = crate::is_rtl(c) || arabic_block(c);
         let preferred = RTL_FALLBACKS.iter().filter(|_| rtl);
@@ -2041,11 +2059,18 @@ mod tests {
         }
         // A Thai font with OpenType tables, as the per-character fallback prefers.
         assert!(f.has_layout_tables(), "{} shapes Thai", f.family);
-        // Without system fonts no bundled face covers Thai: the caller keeps the per-character path.
+        // Without system fonts there is only the bundled craft-fonts face (when built with one):
+        // either it covers the run, or the caller keeps the per-character path.
         let bundled = FontDb::with_font_dirs(Vec::new());
         bundled.set_system_fallback(false);
         let latin = bundled.face(FALLBACK_FAMILY, "Regular");
-        assert!(bundled.fallback_for_run(&chars, latin.id(), false, false).is_none());
+        match bundled.fallback_for_run(&chars, latin.id(), false, false) {
+            Some(f) => {
+                assert_eq!(f.family, "Noto Sans Thai", "the bundled Thai face covers the run");
+                assert!(chars.iter().all(|c| f.covers(*c)));
+            }
+            None => assert!(crate::thai_fonts().next().is_none(), "only a build without the bundled Thai face has no answer"),
+        }
     }
 
     #[cfg(not(target_arch = "wasm32"))]

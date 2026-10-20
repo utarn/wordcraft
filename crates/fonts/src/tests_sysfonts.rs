@@ -235,8 +235,10 @@ fn fallback_lookups_are_remembered_until_fonts_load() {
     let db = FontDb::with_font_dirs(vec![dir]);
     db.set_system_fallback(false);
     let latin = db.face(FALLBACK_FAMILY, "Regular");
-    let thai = 'ก';
-    assert!(db.fallback_for(thai, latin.id()).is_none(), "no bundled Thai font");
+    // A noncharacter no bundled face maps: a remembered miss (Thai is covered when craft-fonts
+    // embeds Noto Sans Thai, #20).
+    let thai = '\u{FFFF}';
+    assert!(db.fallback_for(thai, latin.id()).is_none(), "no bundled face covers it");
     let a = db.fallback_for('A', latin.id()).unwrap();
     assert_eq!(db.fallback_for('A', latin.id()).unwrap().id(), a.id(), "the same answer from the cache");
     {
@@ -316,7 +318,8 @@ fn fallback_cache_is_dropped_when_a_face_loads_by_its_legacy_family_name() {
     let db = FontDb::with_font_dirs(vec![dir]);
     db.set_system_fallback(false);
     let latin = db.face(FALLBACK_FAMILY, "Regular");
-    let thai = 'ก';
+    // A noncharacter no bundled face maps (Thai is covered by the bundled Noto Sans Thai, #20).
+    let thai = '\u{FFFF}';
     assert!(db.fallback_for(thai, latin.id()).is_none());
     let before = db.read_faces().len();
     let semibold = format!("{FAMILY} Semibold");
