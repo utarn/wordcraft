@@ -1,6 +1,6 @@
 # WordCraft architecture
 
-> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-10 · **Change:** minor (`proof` is per language: English and Polish; previously major: first committed version; `plan/architecture.md` is local-only) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
+> **Last reviewed:** 2026-10-10 · **Last updated:** 2026-10-20 · **Change:** minor (the layer-1 `thai` crate segments Thai with the ICU dictionary compiled to an embedded FST and supplies layout's break opportunities and proofing's words; `fonts` carries the ordered Thai substitution policy, theme/`w:cs` resolution and AAT shaping, `layout` carries Thai dictionary wrapping and Thai Distributed, and `proof` checks Thai (#14, #16, #17, #18, #19, #20); previously minor: `proof` is per language: English and Polish; previously major: first committed version; `plan/architecture.md` is local-only) · **Target:** Microsoft Word (Microsoft 365) for Mac 16.113.4
 
 How WordCraft is built today (origin/main `40c5d51`). The longer design notes in
 `plan/architecture.md` are gitignored and local to the original author's machine; this file is the
@@ -8,7 +8,7 @@ committed, current summary. Rules for working in the code are in [`AGENTS.md`](.
 
 ## Layers
 
-~85,600 lines of Rust, 15 crates, 3 apps and `xtask`. Layering is enforced by `cargo xtask layers`:
+~89,000 lines of Rust, 17 crates, 3 apps and `xtask`. Layering is enforced by `cargo xtask layers`:
 a crate may only depend on crates in lower layers, and nothing below L6 depends on egui, eframe,
 winit or rfd.
 
@@ -16,9 +16,11 @@ winit or rfd.
 |---|---|---|---|
 | L0 | `geom` | 0.2k | Units (points, twips, EMU, inches, cm), rectangles, measurement parsing |
 | L1 | `doc` | 10.0k | Document model: stories, paragraphs, runs, tables, sections, styles, numbering, fields, notes, comments, revisions, equations (OMML-shaped math tree, linear/LaTeX input); edit primitives; bidi |
-| L1 | `fonts` | 2.3k | Font database (bundled OFL + system fonts), metrics, outlines, shaping with HarfRust, Word font substitution (`word.rs`: Carlito ↔ Calibri, Caladea ↔ Cambria, Liberation ↔ Arial/Times/Courier), OpenType MATH |
-| L1 | `proof` | 3.8k | Proofing per language (`ProofLang` from a run's `w:lang`): English (public-domain word list) and Polish (installed Hunspell dictionary through a Hunspell-style affix engine) spelling and suggestions, rule-based grammar for both, hyphenation dictionary and Liang patterns (English, Polish) |
-| L2 | `layout` | 9.6k | Shaping runs, line breaking, tabs, lists, tables (row splitting, floating tables), pagination, headers/footers, notes, floating objects and wrap, math layout, fields, hit testing; produces a display list |
+| L1 | `fonts` | 2.4k | Font database (bundled OFL + system fonts, expanded XDG/Flatpak/Snap/Nix/X11/BSD discovery), metrics, outlines, shaping with HarfRust (GSUB, GPOS/GDEF or AAT `morx`), Word font substitution (`word.rs`: Carlito ↔ Calibri, Caladea ↔ Cambria, Liberation ↔ Arial/Times/Courier) and one ordered per-platform Thai policy (TH Sarabun New → TH SarabunPSK → platform list; serif-only lists), per-run/per-script Thai fallback for `w:cs`/`w:cstheme`/`<a:font script="Thai">`, OpenType MATH |
+| L1 | `proof` | 3.9k | Proofing per language (`ProofLang` from a run's `w:lang`, ten proofed languages): English (public-domain word list), Polish, Portuguese, Italian, Croatian, Turkish, Russian, Czech, Indonesian and Thai spelling and suggestions over the shared affix engine (Croatian, Czech, Indonesian, Italian, Polish, Portuguese, Russian and Turkish from installed Hunspell dictionaries; Thai from a runtime `th_TH` dictionary with TIS-620 decoding, else the bundled CC0 PyThaiNLP list), rule-based grammar for English, Polish, Portuguese, Italian, Croatian and Turkish, hyphenation for English, Polish, Portuguese, Italian, Russian and Turkish; no Thai grammar or hyphenation |
+| L1 | `thai` | 0.4k | Thai word segmentation and line breaking: the Unicode-licensed ICU Thai word list compiled by `build.rs` to an embedded FST (no filesystem, so web works). `segments` gives byte-offset words to `proof`; `breaks` gives guarded line-break opportunities (no end on a leading vowel, no start on a combining mark, paiyannoi/maiyamok attached) to `layout`. Only dependency: `fst` |
+| L1 | `metafile` | 3.2k | Windows WMF and EMF metafile records parsed into a neutral vector model (paths and bitmaps) for layout and rendering; `kurbo` |
+| L2 | `layout` | 9.7k | Shaping runs, line breaking (UAX #14 plus `thai::breaks` dictionary opportunities guarded for Thai typography), tabs, lists, tables (row splitting, floating tables), pagination, headers/footers, notes, floating objects and wrap, math layout, fields, hit testing, Thai Distributed line distribution; produces a display list |
 | L2 | `docx` | 8.4k | OOXML WordprocessingML reader and writer (Transitional and Strict namespaces, `.docx/.docm/.dotx/.dotm`), OMML, custom properties, VBA parts preserved |
 | L2 | `docbin` | 4.4k | Word 97-2003 `.doc` reader ([MS-DOC]: FIB, piece table, FKPs, SPRMs, stylesheet, lists, tables, notes, pictures) over a CFB container |
 | L2 | `formats` | 10.6k | TXT, Markdown, HTML, RTF, ODT and LaTeX import/export through a shared intermediate model |
@@ -64,5 +66,6 @@ winit or rfd.
 
 | Date | Change | Summary |
 |---|---|---|
+| 2026-10-20 | minor | Added the layer-1 `thai` crate (`fst` + embedded ICU word list; segmentation for proofing, guarded breaks for layout) and the layer-1 `metafile` crate, which the table had omitted; recorded the Thai work in `fonts` (ordered per-platform substitution, run-scoped per-script fallback, `w:cs`/theme, AAT), `layout` (dictionary wrapping, Thai Distributed) and `proof` (ten proofed languages) |
 | 2026-10-10 | minor | `proof`: proofing languages (English, Polish), affix engine, Polish patterns; layout and engine route each run by its language |
 | 2026-10-10 | major | First committed architecture doc, from the crates' sources and `AGENTS.md` |
