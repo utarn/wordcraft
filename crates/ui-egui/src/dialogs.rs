@@ -1091,7 +1091,8 @@ impl Dialog {
                     .get("missingFamilies")
                     .and_then(Value::as_array)
                     .map(|a| a.iter().filter_map(|m| m.get("family").and_then(Value::as_str).map(str::to_string)).collect())
-                    .unwrap_or_default();                let mut d = Dialog::Font {
+                    .unwrap_or_default();
+                let mut d = Dialog::Font {
                     font_was: font.clone(),
                     font,
                     font_ea_was: font_ea.clone(),
@@ -1722,7 +1723,26 @@ fn preview_size(size: &str) -> f32 {
 /// The character properties the Font dialog's fields stand for.
 fn font_props(d: &Dialog) -> serde_json::Map<String, Value> {
     let Dialog::Font {
-        font, font_ea, font_cs, size_cs, size, bold, italic, underline, strike, sup, sub, small_caps, caps, hidden, color, spacing, kern, kern_at, ..    } = d
+        font,
+        font_ea,
+        font_cs,
+        size_cs,
+        size,
+        bold,
+        italic,
+        underline,
+        strike,
+        sup,
+        sub,
+        small_caps,
+        caps,
+        hidden,
+        color,
+        spacing,
+        kern,
+        kern_at,
+        ..
+    } = d
     else {
         return serde_json::Map::new();
     };

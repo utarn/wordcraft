@@ -178,7 +178,8 @@ pub fn set_dictionaries_folder(dir: Option<std::path::PathBuf>) {
     cs::reload_dictionary();
     id::reload_dictionary();
     es::reload_dictionary();
-    th::reload_dictionary();    DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
+    th::reload_dictionary();
+    DICTIONARY_GENERATION.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Each language that reads an installed Hunspell dictionary, with the `.dic` file found for it
@@ -505,7 +506,8 @@ fn accepted_by_options(word: &str, opts: &Options) -> bool {
         || (opts.ignore_uppercase && w.chars().any(char::is_uppercase) && w.chars().all(|c| !c.is_lowercase()))
         // The whole word: the languages split a hyphenated word into its parts, and an added
         // `Unigranrio-RJ` is none of them (#2082).
-        || in_user_dictionary(&w.to_lowercase())}
+        || in_user_dictionary(&w.to_lowercase())
+}
 
 /// [`is_correct`] with the File › Options › Proofing choices.
 pub fn is_correct_with(word: &str, opts: &Options) -> bool {
@@ -802,7 +804,8 @@ fn composed(word: &str) -> std::borrow::Cow<'_, str> {
     if word.is_ascii() || is_nfc_quick(word.chars()) == IsNormalized::Yes {
         std::borrow::Cow::Borrowed(word)
     } else {
-        std::borrow::Cow::Owned(word.nfc().collect())    }
+        std::borrow::Cow::Owned(word.nfc().collect())
+    }
 }
 
 /// [`is_correct_in`] with the File › Options › Proofing choices. A word with combining marks is
@@ -1080,10 +1083,10 @@ mod tests {
             assert_eq!(dictionary_needed(l, false), Some(name), "{l:?}");
             assert_eq!(dictionary_needed(l, true), None, "{l:?}");
         }
-        // Every proofed language other than English has a Hunspell dictionary to report.
+        // Every proofed language other than English and Thai has a Hunspell dictionary to report.
         for l in ProofLang::PROOFED {
-            let english = matches!(l, ProofLang::En | ProofLang::EnGb | ProofLang::EnCa);
-            assert_eq!(dictionary_needed(l, false).is_some(), !english, "{l:?}");
+            let bundled = matches!(l, ProofLang::En | ProofLang::EnGb | ProofLang::EnCa | ProofLang::Th);
+            assert_eq!(dictionary_needed(l, false).is_some(), !bundled, "{l:?}");
         }
         for l in [ProofLang::En, ProofLang::Bg, ProofLang::De, ProofLang::Other] {
             assert_eq!(dictionary_needed(l, false), None);
@@ -1108,7 +1111,8 @@ mod tests {
     /// stays set for the rest of the run for that reason.
     #[test]
     fn dictionaries_folder_is_searched_first() {
-        let _guard = DICTIONARY_TESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);        let dir = std::env::temp_dir().join(format!("wc-proof-dictionaries-{}", std::process::id()));
+        let _guard = DICTIONARY_TESTS.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        let dir = std::env::temp_dir().join(format!("wc-proof-dictionaries-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         for (name, aff, dic) in [
             ("pl_PL", pl::test_dict::AFF, pl::test_dict::DIC),

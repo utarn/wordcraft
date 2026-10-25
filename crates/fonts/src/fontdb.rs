@@ -939,7 +939,8 @@ pub fn system_font_dirs() -> Vec<std::path::PathBuf> {
         // 1.19.2 also mounts ~/.fonts, at user-fonts-legacy when the XDG user font folder exists too.
         dirs.extend(["/run/host/fonts", "/run/host/local-fonts", "/run/host/user-fonts", "/run/host/user-fonts-legacy"].map(Into::into));
         let mut seen = std::collections::HashSet::new();
-        dirs.retain(|d| seen.insert(d.clone()));    }
+        dirs.retain(|d| seen.insert(d.clone()));
+    }
     dirs
 }
 
@@ -1504,7 +1505,8 @@ impl FontDb {
         let mut p: Vec<_> = cat.iter().filter(|c| families.iter().any(|f| c.family.eq_ignore_ascii_case(f))).map(|c| c.path.clone()).collect();
         p.sort();
         p.dedup();
-        p    }
+        p
+    }
 
     /// Resolve a family + style to a face, falling back to the closest style of the family, then to
     /// Source Sans 3 Regular. `family` is a typographic family ("Roboto") or a face's legacy family

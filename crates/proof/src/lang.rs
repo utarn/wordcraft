@@ -88,7 +88,8 @@ impl ProofLang {
     pub const PROOFED: [ProofLang; 16] = [
         ProofLang::En,
         ProofLang::EnGb,
-        ProofLang::EnCa,        ProofLang::Pl,
+        ProofLang::EnCa,
+        ProofLang::Pl,
         ProofLang::Pt,
         ProofLang::It,
         ProofLang::Hr,
@@ -100,7 +101,8 @@ impl ProofLang {
         ProofLang::EsMx,
         ProofLang::Es419,
         ProofLang::EsUy,
-        ProofLang::Th,    ];
+        ProofLang::Th,
+    ];
 
     /// The proofing language of a BCP 47 tag (`pl-PL`, `en_GB`, `PL`…). The primary subtag
     /// counts, and for English and Spanish the region too ([`ProofLang::english`],
@@ -134,7 +136,8 @@ impl ProofLang {
         } else if ["de", "deu", "ger"].iter().any(|c| primary.eq_ignore_ascii_case(c)) {
             ProofLang::De
         } else if primary.eq_ignore_ascii_case("th") || primary.eq_ignore_ascii_case("tha") {
-            ProofLang::Th        } else {
+            ProofLang::Th
+        } else {
             ProofLang::Other
         }
     }
@@ -188,7 +191,8 @@ impl ProofLang {
             ProofLang::Id => "id",
             ProofLang::Es | ProofLang::EsMx | ProofLang::Es419 | ProofLang::EsUy => "es",
             ProofLang::De => "de",
-            ProofLang::Th => "th",            ProofLang::Other => "",
+            ProofLang::Th => "th",
+            ProofLang::Other => "",
         }
     }
 
@@ -309,7 +313,8 @@ mod tests {
         }
         assert_eq!(ProofLang::Th.code(), "th");
         assert!(ProofLang::Th.is_proofed() && ProofLang::PROOFED.contains(&ProofLang::Th));
-        for t in ["en", "en-US", "en-GB", "EN_au", "en-Latn-US"] {            assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::En, "{t}");
+        for t in ["en", "en-US", "EN_us", "en-Latn-US", "en-PH", "en-001", "eng", "en_US.UTF-8", "en-x-gb"] {
+            assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::En, "{t}");
         }
         for t in [
             "en-GB",
@@ -350,7 +355,8 @@ mod tests {
             assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::De, "{t}");
         }
         assert!(!ProofLang::De.is_proofed());
-        for t in ["fr-FR", "dex", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "esx", "spax", "thx", "e", "-"] {            assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Other, "{t}");
+        for t in ["fr-FR", "dex", "x-none", "ja-JP", "plx", "bgx", "trx", "csx", "idx", "inx", "esx", "spax", "thx", "e", "-"] {
+            assert_eq!(ProofLang::from_tag(Some(t)), ProofLang::Other, "{t}");
         }
         assert_eq!(ProofLang::from_tag(None), ProofLang::En);
         assert_eq!(ProofLang::from_tag(Some("")), ProofLang::En);

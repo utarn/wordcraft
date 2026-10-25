@@ -2174,7 +2174,6 @@ fn thai_distribute(pl: &mut ParaLayout, text: &str, xs: &mut [f32], c0: usize, c
     }
 }
 
-
 /// Break a paragraph into lines, measure each line, apply the paragraph's alignment and place
 /// the list label. Fills `pl.lines`, `pl.height` and the label's position.
 fn break_lines(pl: &mut ParaLayout, text: &str, env: &ParaEnv, mark_style: u32, level: Option<&Level>) {
