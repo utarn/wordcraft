@@ -738,10 +738,91 @@ pub(crate) fn remap_range(map_starts: &[usize], orig_of: &[usize], orig_len: usi
 enum Dir<'l> {
     /// Paragraph text: the paragraph's levels at the piece's offset.
     Para,
+    /// Paragraph runs shaped together with the text left out between them removed: the
+    /// paragraph's levels copied onto that text, by byte.
+    Runs(&'l [u8]),
     /// Text laid out on its own (a field result): these levels, by byte of the text.
     Own(&'l [u8]),
     /// Each strong run in its own direction (list labels, ruby, left-to-right results).
     Guess,
+}
+
+/// Where the bytes of a shaped piece sit in the paragraph. Paragraph runs of the same format are
+/// shaped as one piece even when hidden or deleted text between them is left out, so the piece is
+/// a concatenation of parts of the paragraph: for each char, `chars` holds its start here, its
+/// start there, its end here and its end there. Empty `chars`: the piece is contiguous from `base`.
+#[derive(Clone, Copy)]
+struct BackMap<'a> {
+    base: usize,
+    chars: &'a [(usize, usize, usize, usize)],
+}
+
+impl BackMap<'_> {
+    /// A contiguous piece starting at paragraph byte `base`.
+    fn contiguous(base: usize) -> Self {
+        Self { base, chars: &[] }
+    }
+
+    /// The paragraph byte where the shaped-piece char at `off` starts.
+    fn start(&self, off: usize) -> usize {
+        if self.chars.is_empty() {
+            return self.base + off;
+        }
+        if off == 0 {
+            return self.chars[0].1;
+        }
+        match self.chars.binary_search_by_key(&off, |c| c.0) {
+            Ok(k) => self.chars[k].1,
+            // Not a char start (should not happen for clusters): the previous char's end.
+            Err(0) => self.base,
+            Err(k) => self.chars[k - 1].3,
+        }
+    }
+
+    /// The paragraph byte where the shaped-piece char at `off` ends.
+    fn end(&self, off: usize) -> usize {
+        if self.chars.is_empty() {
+            return self.base + off;
+        }
+        if off == 0 {
+            return self.base;
+        }
+        match self.chars.binary_search_by_key(&off, |c| c.2) {
+            Ok(k) => self.chars[k].3,
+            Err(0) => self.base,
+            Err(k) => self.chars[k - 1].3,
+        }
+    }
+}
+
+/// Do `prev` and `next` form one grapheme cluster when adjacent? A left-out run between them must
+/// not let one layout cluster span the marker that stands in for it.
+fn same_grapheme(prev: char, next: char) -> bool {
+    let mut buf = [0u8; 8];
+    let n = prev.encode_utf8(&mut buf).len();
+    let m = next.encode_utf8(&mut buf[n..]).len();
+    std::str::from_utf8(&buf[..n + m]).is_ok_and(|s| !wordcraft_doc::cluster::is_cluster_boundary(s, n))
+}
+
+/// Adjacent paragraph runs of one format, shaped as one piece so hidden or deleted text between
+/// them cannot break the shaping (kerning, marks): Word shapes what it shows, not the runs the
+/// document happens to store. `chars` and `levels` describe the text as the paragraph has it;
+/// `markers` are the left-out runs inside, put back as zero-width markers between clusters.
+struct ShapeBatch {
+    text: String,
+    /// The paragraph byte where `text` starts.
+    base: usize,
+    /// For each char of `text`: (its start there, its start in the paragraph, its end there, its
+    /// end in the paragraph).
+    chars: Vec<(usize, usize, usize, usize)>,
+    /// The paragraph's bidi levels copied onto `text`, by byte (empty when it has none).
+    levels: Vec<u8>,
+    rc: Arc<ResolvedChar>,
+    /// (start, end, style) of each left-out char, in order.
+    markers: Vec<(usize, usize, u32)>,
+    /// Left-out text was left out since the last plain span, so a char joining the span before
+    /// it into one grapheme must start a new batch (a cluster may not span a marker).
+    gap: bool,
 }
 
 /// The direction of `c` if it is a strong letter (UAX #9 P2): `Some(true)` right to left.
@@ -911,11 +992,107 @@ impl<'a> Builder<'a> {
 
     /// Shape `text` (a piece of the paragraph starting at byte `base`) in one style and append clusters.
     fn shape(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>) {
-        self.shape_with(text, base, rc, kind_override, Dir::Para);
+        self.shape_with(text, base, rc, kind_override, Dir::Para, BackMap::contiguous(base));
     }
 
-    /// `dir`: the bidi levels `text` is shaped by (see [`Dir`]).
-    fn shape_with(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>, dir: Dir<'_>) {
+    /// Add a plain paragraph span to the pending batch, shaping it together with the runs around
+    /// it. A different format, a character that joins the text before it into one grapheme, or a
+    /// special character flushes the batch first.
+    fn batch_plain(&mut self, batch: &mut Option<ShapeBatch>, text: &str, at: usize, rc: &Arc<ResolvedChar>) {
+        if text.is_empty() {
+            return;
+        }
+        // A hidden gap between a base and its combining mark must keep them separate clusters:
+        // the cluster may not span the marker that stands in for it.
+        let joins = batch.as_ref().is_some_and(|b| {
+            b.gap
+                && match (b.text.chars().next_back(), text.chars().next()) {
+                    (Some(prev), Some(next)) => same_grapheme(prev, next),
+                    _ => false,
+                }
+        });
+        if joins || batch.as_ref().is_some_and(|b| *b.rc != **rc) {
+            self.flush_batch(batch);
+        }
+        let b = batch.get_or_insert_with(|| ShapeBatch {
+            text: String::new(),
+            base: at,
+            chars: Vec::new(),
+            levels: Vec::new(),
+            rc: rc.clone(),
+            markers: Vec::new(),
+            gap: false,
+        });
+        b.gap = false;
+        let start = b.text.len();
+        b.text.push_str(text);
+        b.chars.extend(text.char_indices().map(|(i, c)| (start + i, at + i, start + i + c.len_utf8(), at + i + c.len_utf8())));
+        // Bidi levels index the paragraph by byte; copy them onto the batch's text.
+        if !self.levels.is_empty()
+            && let Some(l) = self.levels.get(at..at + text.len())
+        {
+            b.levels.extend_from_slice(l);
+        }
+    }
+
+    /// Shape the pending batch, then put the left-out runs inside it back as zero-width markers
+    /// between the clusters, in text order.
+    fn flush_batch(&mut self, batch: &mut Option<ShapeBatch>) {
+        let Some(b) = batch.take() else { return };
+        let first = self.clusters.len();
+        self.shape_with(&b.text, 0, &b.rc, None, Dir::Runs(&b.levels), BackMap { base: b.base, chars: &b.chars });
+        if b.markers.is_empty() {
+            return;
+        }
+        // Markers carry no glyphs: they sit at the current end of the glyph list.
+        let g = self.glyphs.len() as u32;
+        let shaped: Vec<Cluster> = self.clusters.split_off(first);
+        let extra = b.markers.len();
+        let mut markers = b.markers.into_iter().peekable();
+        let mut out = Vec::with_capacity(shaped.len() + extra);
+        for c in shaped {
+            while let Some(&(start, end, style)) = markers.peek() {
+                if start > c.start {
+                    break;
+                }
+                markers.next();
+                out.push(Cluster {
+                    start,
+                    end,
+                    adv: 0.0,
+                    kind: ClKind::Marker,
+                    style,
+                    g0: g,
+                    g1: g,
+                    break_after: false,
+                    obj_h: 0.0,
+                    obj_d: 0.0,
+                    dot: false,
+                });
+            }
+            out.push(c);
+        }
+        for (start, end, style) in markers {
+            out.push(Cluster {
+                start,
+                end,
+                adv: 0.0,
+                kind: ClKind::Marker,
+                style,
+                g0: g,
+                g1: g,
+                break_after: false,
+                obj_h: 0.0,
+                obj_d: 0.0,
+                dot: false,
+            });
+        }
+        self.clusters.extend(out);
+    }
+
+    /// `dir`: the bidi levels `text` is shaped by (see [`Dir`]); `back` maps its bytes back to the
+    /// paragraph (see [`BackMap`]).
+    fn shape_with(&mut self, text: &str, base: usize, rc: &Arc<ResolvedChar>, kind_override: Option<ClKind>, dir: Dir<'_>, back: BackMap<'_>) {
         if text.is_empty() {
             return;
         }
@@ -940,7 +1117,7 @@ impl<'a> Builder<'a> {
         // The levels by byte of `text`, from `lbase` on.
         let (levels, lbase): (&[u8], usize) = match dir {
             Dir::Para => (&self.levels, base),
-            Dir::Own(l) => (l, 0),
+            Dir::Runs(l) | Dir::Own(l) => (l, 0),
             Dir::Guess => (&[], 0),
         };
         let use_levels = !levels.is_empty();
@@ -1114,15 +1291,20 @@ impl<'a> Builder<'a> {
                 let g0 = self.glyphs.len() as u32;
                 let s = shape_text.get(gs..ge).unwrap_or("");
                 // A SARA AM after the cluster's first character starts its own Thai Distributed
-                // unit: note the glyph it begins so a gap can go before it.
+                // unit: note the glyph it begins so a gap can go before it. The shaper may
+                // decompose SARA AM and merge its grapheme's clusters (Noto Sans Thai reports
+                // the whole cluster as byte 0), so clusters cannot locate it; count the glyphs
+                // the text before it shapes to instead.
                 let am = s.char_indices().find(|(i, c)| *i > 0 && *c == '\u{0E33}').map(|(i, _)| gs + i);
+                let am_glyphs = am.map(|a| wordcraft_fonts::shape_run(&st.face, shape_text.get(gs..a).unwrap_or(""), features, map, key.rtl).len());
+                let cluster_gi = gi;
                 let mut am_g = None;
                 let mut adv = 0.0f32;
                 while let Some(g) = shaped.get(gi) {
                     if g.cluster >= ge {
                         break;
                     }
-                    if am_g.is_none() && am.is_some_and(|a| g.cluster >= a) {
+                    if am_g.is_none() && am_glyphs.is_some_and(|n| gi - cluster_gi == n) {
                         am_g = Some(self.glyphs.len() as u32);
                     }
                     self.glyphs.push(Glyph { gid: g.gid, dx: adv + g.x_offset as f32 * k * hscale, dy: g.y_offset as f32 * k });
@@ -1146,8 +1328,8 @@ impl<'a> Builder<'a> {
                 // Clusters index the document text, never the displayed text.
                 let (cs, ce) = if substituted { remap_range(&map_starts, &orig_of, sub.len(), gs, ge) } else { (gs, ge) };
                 self.clusters.push(Cluster {
-                    start: base + a + cs,
-                    end: base + a + ce,
+                    start: back.start(a + cs),
+                    end: back.end(a + ce),
                     adv,
                     kind,
                     style: si,
@@ -1159,7 +1341,7 @@ impl<'a> Builder<'a> {
                     dot: s == "." || s == ",",
                 });
             }
-            if matches!(dir, Dir::Para) {
+            if matches!(dir, Dir::Para | Dir::Runs(_)) {
                 self.split_ligature_advances(seg_c0, rc.spacing, key.rtl);
             }
         }
@@ -1213,7 +1395,7 @@ impl<'a> Builder<'a> {
         let lv = bidi_levels(text, rtl_base);
         let before = self.clusters.len();
         let before_am = self.sara_am.len();
-        self.shape_with(text, start, rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) });
+        self.shape_with(text, start, rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) }, BackMap::contiguous(start));
         let added: Vec<Cluster> = self.clusters.drain(before..).collect();
         // The pieces are merged into one cluster below, so their SARA AM boundaries no longer mean
         // anything.
@@ -1427,7 +1609,7 @@ impl Builder<'_> {
         self.shape_atomic(base, start, end, rc);
         let ci = self.clusters.len().checked_sub(1)?;
         let (bc, bg) = (self.clusters.len(), self.glyphs.len());
-        self.shape_with(ruby, 0, ruby_rc, None, Dir::Guess);
+        self.shape_with(ruby, 0, ruby_rc, None, Dir::Guess, BackMap::contiguous(0));
         let cl: Vec<Cluster> = self.clusters.drain(bc..).collect();
         let ruby_w: f32 = cl.iter().map(|c| c.adv).sum();
         let base_w = self.clusters.get(ci).map_or(0.0, |c| c.adv);
@@ -1545,6 +1727,8 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
     let mut left: Vec<std::ops::Range<usize>> = Vec::new();
     // Each run's proofing language and whether it is checked (spelling, grammar, hyphenation).
     let mut runs: Vec<ProofRun> = Vec::new();
+    // Runs of one format shaped together across the text left out between them (see `ShapeBatch`).
+    let mut batch: Option<ShapeBatch> = None;
     for (range, props) in p.run_ranges() {
         let rc = resolve(props);
         runs.push(ProofRun::of(range.clone(), &rc));
@@ -1555,6 +1739,18 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
                 _ => left.push(range.clone()),
             }
             let si = b.style(&rc, None, false);
+            // A hidden or deleted reference mark is still noted: it needs its cluster index now,
+            // so a batch outstanding here is flushed and the markers are placed directly.
+            if batch.is_some() && text.contains(OBJ) {
+                b.flush_batch(&mut batch);
+            }
+            if let Some(bt) = batch.as_mut() {
+                // Left out text between visible runs takes no room: remember its markers so they
+                // can go between the shaped clusters of the batch (in text order).
+                bt.markers.extend(text.char_indices().map(|(i, c)| (range.start + i, range.start + i + c.len_utf8(), si)));
+                bt.gap = true;
+                continue;
+            }
             let g = b.glyphs.len() as u32;
             // Word still prints the note of a hidden reference mark (and numbers it); a deleted
             // reference is gone from the final text, note and all.
@@ -1593,6 +1789,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
             && let Some(c) = drop_first
             && let Some(first) = text.get(..c.len_utf8())
         {
+            b.flush_batch(&mut batch);
             let line_h = (rc.size * 1.2).max(1.0);
             let lines = rp.drop_cap as f32;
             // Capital height is ~0.7 em: the letter's cap spans from line 1's caps to line N's baseline.
@@ -1625,8 +1822,9 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
                 continue;
             }
             if let Some(s) = text.get(seg..i) {
-                b.shape(s, range.start + seg, &rc, None);
+                b.batch_plain(&mut batch, s, range.start + seg, &rc);
             }
+            b.flush_batch(&mut batch);
             seg = i + c.len_utf8();
             let (start, end) = (range.start + i, range.start + i + c.len_utf8());
             let si = b.style(&rc, None, false);
@@ -1784,9 +1982,10 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
             }
         }
         if let Some(s) = text.get(seg..) {
-            b.shape(s, range.start + seg, &rc, None);
+            b.batch_plain(&mut batch, s, range.start + seg, &rc);
         }
     }
+    b.flush_batch(&mut batch);
     if rp.snap_to_grid {
         snap_chars(&mut b, &p.text, &env.grid);
     }
@@ -1902,7 +2101,7 @@ pub fn layout_para(p: &Paragraph, env: &ParaEnv) -> ParaLayout {
         let lv = if rp.bidi { bidi_levels(text, true) } else { Vec::new() };
         let before_c = b.clusters.len();
         let before_g = b.glyphs.len();
-        b.shape_with(text, 0, &rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) });
+        b.shape_with(text, 0, &rc, None, if lv.is_empty() { Dir::Guess } else { Dir::Own(&lv) }, BackMap::contiguous(0));
         let mut cl: Vec<Cluster> = b.clusters.drain(before_c..).collect();
         if !lv.is_empty() {
             let cl_lv: Vec<u8> = cl.iter().map(|c| lv.get(c.start).copied().unwrap_or(1)).collect();
